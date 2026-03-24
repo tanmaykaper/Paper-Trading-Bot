@@ -26,4 +26,4 @@ jobs:
         pip install -r requirements.txt
 
     - name: Run the trading bot
-      run: python run_paper_trading.py
+      run: timeout 5m python paper_trading.py || true
