@@ -4,7 +4,7 @@ on:
   schedule:
     # GitHub uses UTC time. 03:45 UTC is 09:15 AM IST.
     # The '1-5' means it runs Monday through Friday.
-    - cron: '45 6 * * 1-5'
+    - cron: '30 11 * * 1-5'
   workflow_dispatch: # This line adds a button so you can run it manually anytime!
 
 jobs:
