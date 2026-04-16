@@ -228,7 +228,7 @@ if __name__ == "__main__":
     )
 
     # Option 1: Run continuously (recommended for live use)
-    runner.run_continuous(hours=24)
+    runner.run_continuous(hours=480)
 
     # Option 2: Run EOD once manually (for testing)
     # runner.run_eod_process()
