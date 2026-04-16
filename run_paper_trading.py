@@ -198,7 +198,7 @@ class DailyPaperTradingRunner:
         logger.info("="*70 + "\n")
 
     # ─────────────────────────────────────────────────────────────────────────
-    def run_continuous(self, hours=24):
+    def run_continuous(self, hours=480):
         logger.info(f"🚀 Starting continuous paper trading for {hours} hours...")
         start = datetime.now()
 
@@ -208,16 +208,16 @@ class DailyPaperTradingRunner:
                     logger.info("Market closed. Running EOD process...")
                     self.run_eod_process()
                     logger.info("Waiting for next market open (9:15 AM IST)...")
-                    time.sleep(60)
+                    time.sleep(86400)
                 else:
                     logger.info(f"Market open. Next EOD check at 4:00 PM IST...")
-                    time.sleep(300)
+                    time.sleep(3600)
             except KeyboardInterrupt:
                 logger.info("Shutting down...")
                 break
             except Exception as e:
                 logger.error(f"Error in continuous run: {e}")
-                time.sleep(60)
+                time.sleep(600)
 
 
 if __name__ == "__main__":
