@@ -1,29 +1,83 @@
-name: Daily Paper Trading Bot
+# .github/workflows/paper_trading.yml
+#
+# Runs the NSE paper trading bot once daily at 16:15 IST (10:45 UTC)
+# — 45 minutes after NSE closes at 15:30 IST, giving Yahoo Finance
+#   time to publish final closing prices.
+#
+# After the bot runs, it commits any changes to paper_trades.csv and
+# daily_equity.csv back to the repo. This is how state persists across runs.
+#
+# Setup required (one-time, in your GitHub repo settings):
+#   Settings → Secrets and variables → Actions → New repository secret
+#   No secrets needed for basic operation — the GITHUB_TOKEN is automatic.
+#   If you want email alerts, add: EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT
+#
+# To trigger a manual run (e.g. for testing):
+#   Actions tab → "NSE Paper Trading Bot" → Run workflow
+
+name: NSE Paper Trading Bot
 
 on:
   schedule:
-    # GitHub uses UTC time. 03:45 UTC is 09:15 AM IST.
-    # The '1-5' means it runs Monday through Friday.
-    - cron: '00 17 * * 1-5'
-  workflow_dispatch: # This line adds a button so you can run it manually anytime!
+    # 10:45 UTC = 16:15 IST (NSE closes 15:30, we wait 45min for prices to settle)
+    - cron: '45 10 * * 1-5'   # weekdays only (Mon-Fri), skips weekends automatically
+
+  workflow_dispatch:           # allows manual trigger from Actions tab
 
 jobs:
   run-bot:
-    runs-on: ubuntu-latest # This boots up a free Linux server
+    runs-on: ubuntu-latest
+    timeout-minutes: 30        # kill if it hangs (e.g. yfinance rate limit)
+
+    permissions:
+      contents: write          # needed to push the updated CSVs back to repo
 
     steps:
-    - name: Get files from repository
-      uses: actions/checkout@v4
+      # ── 1. Check out the repo (including paper_trades.csv) ──────────────────
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          # fetch full history so git blame/log work; not strictly required
+          fetch-depth: 1
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.14' # You can change this to match your local Python version
+      # ── 2. Set up Python ────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'         # caches pip downloads between runs → faster
 
-    - name: Install required libraries
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      # ── 3. Install dependencies ─────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas numpy requests beautifulsoup4 python-dotenv
 
-    - name: Run the trading bot
-      run: python run_paper_trading.py || true
+      # ── 4. Run the bot ──────────────────────────────────────────────────────
+      - name: Run paper trading EOD process
+        env:
+          # Email credentials — set these as repo secrets if you want alerts
+          EMAIL_SENDER:    ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:  ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        run: |
+          python run_paper_trading.py
+
+      # ── 5. Commit updated CSVs back to the repo ─────────────────────────────
+      # This is the persistence mechanism: paper_trades.csv now contains any
+      # newly closed trades and newly opened trades. The next run will read it.
+      - name: Commit updated trade data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage the data files (only these — don't accidentally commit other changes)
+          git add paper_trades.csv daily_equity.csv
+
+          # Only commit if something actually changed (avoids empty commits on no-signal days)
+          if git diff --staged --quiet; then
+            echo "No changes to paper_trades.csv or daily_equity.csv — nothing to commit"
+          else
+            git commit -m "📊 EOD update $(date +'%Y-%m-%d') — auto [skip ci]"
+            git push
+          fi
