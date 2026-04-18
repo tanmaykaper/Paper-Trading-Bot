@@ -1,2 +1,6 @@
-trade_id,symbol,side,entry_datr,entry_price,stop_loss,target_price,position_size,status,exit_date,exit_price,exit_reason,gross_pnl,commission,net_pnl,hold_days,entry_type,entry_date
-
+trade_id,symbol,side,entry_price,stop_loss,target_price,position_size,status,exit_date,exit_price,exit_reason,gross_pnl,commission,net_pnl,hold_days,entry_type,entry_date
+RELIANCE_20260418_1,RELIANCE,LONG,1365.0,1318.07,1505.79,2,OPEN,,,,,,,,engulfing,2026-04-18
+HINDUNILVR_20260418_2,HINDUNILVR,LONG,2240.8,2171.03,2485.0,1,OPEN,,,,,,,,breakout,2026-04-18
+ITC_20260418_3,ITC,LONG,306.8,298.52,339.92,4,OPEN,,,,,,,,pullback,2026-04-18
+SBIN_20260418_4,SBIN,LONG,1080.25,1028.18,1288.53,1,OPEN,,,,,,,,pullback,2026-04-18
+BHARTIARTL_20260418_5,BHARTIARTL,LONG,1846.9,1782.21,2105.66,1,OPEN,,,,,,,,pullback,2026-04-18
