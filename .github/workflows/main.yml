@@ -20,7 +20,7 @@ name: NSE Paper Trading Bot
 on:
   schedule:
     # 10:45 UTC = 16:15 IST (NSE closes 15:30, we wait 45min for prices to settle)
-    - cron: '45 10 * * 1-5'   # weekdays only (Mon-Fri), skips weekends automatically
+    - cron: '00 17 * * 1-5'   # weekdays only (Mon-Fri), skips weekends automatically
 
   workflow_dispatch:           # allows manual trigger from Actions tab
 
