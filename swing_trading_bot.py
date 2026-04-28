@@ -1,16 +1,9 @@
 # swing_trading_bot.py  ── HIGH-RISK / HIGH-FREQUENCY VERSION v3
 # ─────────────────────────────────────────────────────────────────────────────
-# Changes vs v2 (conservative):
-#   max_open_trades  : 3  → 7       (more concurrent positions)
-#   max_hold_days    : 30 → 15      (faster turnover, more trades/month)
-#   max_drawdown_pct : 20%→ 30%     (wider tolerance before halting)
-#   sector cap       : 2  → 3       (higher concentration allowed)
-#   capital per trade: 20%→ 30%     (matched to signal_generator R profile)
-#   debounce         : 5  → 2 bars  (re-enters quickly after stop-out)
-#   Stock universe   : 20 → 40+     (more candidates = more setups per scan)
-#
-# Trailing stop kept — protects winners without cutting them short.
-# Circuit breaker kept but raised to 30% drawdown.
+# Fixes vs previous:
+#   - TATAMOTORS → TATAMOTOR in SECTOR_MAP (yfinance symbol change)
+#   - _get_market_regime passes '^NSEI' which DataFetcherFree now handles
+#     correctly (no .NS suffix for index symbols)
 # ─────────────────────────────────────────────────────────────────────────────
 
 import pandas as pd
@@ -44,7 +37,7 @@ SECTOR_MAP = {
     'HINDUNILVR':'FMCG','ITC':'FMCG','NESTLEIND':'FMCG','DABUR':'FMCG',
     'MARICO':'FMCG','GODREJCP':'FMCG',
     # Auto
-    'MARUTI':'AUTO','TATAMOTORS':'AUTO','BAJAJ-AUTO':'AUTO','EICHERMOT':'AUTO',
+    'MARUTI':'AUTO','TATAMOTOR':'AUTO','BAJAJ-AUTO':'AUTO','EICHERMOT':'AUTO',
     'M&M':'AUTO','HEROMOTOCO':'AUTO',
     # Metals
     'TATASTEEL':'METAL','JSWSTEEL':'METAL','HINDALCO':'METAL','SAIL':'METAL',
@@ -65,11 +58,10 @@ SECTOR_MAP = {
     'DLF':'REALTY','GODREJPROP':'REALTY','OBEROIRLTY':'REALTY',
 }
 
-# High-risk portfolio configuration
-MAX_SECTOR_EXPOSURE  = 3   # was 2
+MAX_SECTOR_EXPOSURE     = 3
 MAX_OPEN_TRADES_DEFAULT = 7
 MAX_HOLD_DAYS_DEFAULT   = 15
-MAX_DRAWDOWN_DEFAULT    = 0.30   # 30% before circuit breaker
+MAX_DRAWDOWN_DEFAULT    = 0.30
 
 
 class SwingTradingBot:
@@ -91,8 +83,8 @@ class SwingTradingBot:
         self.max_hold_days        = max_hold_days
         self.max_drawdown_pct     = MAX_DRAWDOWN_DEFAULT
 
-        self.fundamentals_cache   = {}
-        self.peak_equity          = initial_equity
+        self.fundamentals_cache = {}
+        self.peak_equity        = initial_equity
 
         logger.info(
             f"✓ Bot v3 HIGH-RISK | Equity: ₹{initial_equity:,} | "
@@ -100,9 +92,7 @@ class SwingTradingBot:
             f"Circuit breaker: {MAX_DRAWDOWN_DEFAULT*100:.0f}%"
         )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Helpers
-    # ─────────────────────────────────────────────────────────────────────────
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def get_fundamentals_safe(self, symbol, retry=2):
         if symbol in self.fundamentals_cache:
@@ -118,8 +108,16 @@ class SwingTradingBot:
         return self.fetcher._default_fundamentals()
 
     def _get_market_regime(self, days=300):
+        """
+        Fetch Nifty 50 and classify regime.
+        '^NSEI' is passed directly — DataFetcherFree._to_yf_symbol() leaves
+        index symbols untouched (no .NS suffix).
+        """
         try:
-            nifty  = self.fetcher.get_historical_data('^NSEI', days=days)
+            nifty  = self.fetcher.get_historical_data('^NSEI', days=days, min_bars=200)
+            if nifty is None:
+                logger.warning("⚠️ Could not fetch Nifty data → NEUTRAL")
+                return 'NEUTRAL'
             regime = SignalGenerator.classify_market_regime(nifty)
             logger.info(f"📊 Market regime: {regime}")
             return regime
@@ -143,20 +141,12 @@ class SwingTradingBot:
         return counts
 
     def _apply_trailing_stop(self, trade):
-        """
-        Move stop-loss up as price advances:
-          - At 1:1 (risk matched by gain)  → move SL to breakeven
-          - At 2:1                          → trail SL up to 1:1 profit level
-          - At 3:1                          → trail SL up to 2:1 profit level
-        """
         ep   = trade['entry_price']
         sl   = trade['stop_loss']
         risk = ep - sl
+        curr = trade.get('_curr_price', ep)
 
-        curr = trade.get('_curr_price', ep)   # set by caller
-
-        levels = [(3, 2), (2, 1), (1, 0)]   # (trigger_r, trail_to_r)
-        for trigger_r, trail_r in levels:
+        for trigger_r, trail_r in [(3, 2), (2, 1), (1, 0)]:
             if curr >= ep + trigger_r * risk:
                 new_sl = ep + trail_r * risk
                 if new_sl > trade['stop_loss']:
@@ -164,13 +154,11 @@ class SwingTradingBot:
                 break
         return trade
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Live screening
-    # ─────────────────────────────────────────────────────────────────────────
+    # ── Live screening ────────────────────────────────────────────────────────
 
     def screen_stock(self, symbol):
-        df = self.fetcher.get_historical_data(symbol, days=250)
-        if df is None or len(df) < 50:
+        df = self.fetcher.get_historical_data(symbol, days=250, min_bars=50)
+        if df is None:
             return 'HOLD', {'reason': 'Insufficient data'}
         fund   = self.get_fundamentals_safe(symbol)
         regime = self._get_market_regime()
@@ -182,8 +170,8 @@ class SwingTradingBot:
         regime      = self._get_market_regime()
         for symbol in stock_list:
             try:
-                df = self.fetcher.get_historical_data(symbol, days=250)
-                if df is None or len(df) < 50:
+                df = self.fetcher.get_historical_data(symbol, days=250, min_bars=50)
+                if df is None:
                     continue
                 fund = self.get_fundamentals_safe(symbol)
                 sig, details = self.signal_gen.generate_signal(
@@ -202,9 +190,7 @@ class SwingTradingBot:
         logger.info(f"\n✅ Screening complete — {len(buy_signals)} BUY signals from {len(stock_list)} stocks")
         return buy_signals
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Portfolio backtest
-    # ─────────────────────────────────────────────────────────────────────────
+    # ── Portfolio backtest ────────────────────────────────────────────────────
 
     def backtest_portfolio(self, stock_list, days=600):
         logger.info(f"\n{'='*70}")
@@ -212,12 +198,11 @@ class SwingTradingBot:
         logger.info(f"Initial Equity: ₹{self.initial_equity:,} | Max trades: {self.max_open_trades}")
         logger.info(f"{'='*70}\n")
 
-        # Fetch OHLCV data
         all_dfs = {}
         for i, sym in enumerate(stock_list):
             try:
-                df = self.fetcher.get_historical_data(sym, days=days + 100)
-                if df is not None and len(df) > 60:
+                df = self.fetcher.get_historical_data(sym, days=days + 100, min_bars=60)
+                if df is not None:
                     all_dfs[sym] = df
                     logger.info(f"  ✓ {sym} ({i+1}/{len(stock_list)}): {len(df)} candles")
                 else:
@@ -230,9 +215,8 @@ class SwingTradingBot:
             logger.error("❌ No valid data fetched")
             return None
 
-        # Fetch Nifty for regime
         try:
-            nifty_df = self.fetcher.get_historical_data('^NSEI', days=days + 100)
+            nifty_df = self.fetcher.get_historical_data('^NSEI', days=days + 100, min_bars=200)
         except Exception:
             nifty_df = None
 
@@ -246,14 +230,11 @@ class SwingTradingBot:
         max_candles = max(len(df) for df in all_dfs.values())
 
         for i in range(60, max_candles):
-
-            # ── Market regime ──────────────────────────────────────────────
             if nifty_df is not None and i < len(nifty_df):
                 regime = SignalGenerator.classify_market_regime(nifty_df.iloc[:i+1])
             else:
                 regime = 'NEUTRAL'
 
-            # ── Manage open trades ─────────────────────────────────────────
             to_exit = []
             for sym, trade in list(open_trades.items()):
                 if sym not in all_dfs or i >= len(all_dfs[sym]):
@@ -264,7 +245,6 @@ class SwingTradingBot:
                 ep, ps     = trade['entry_price'], trade['position_size']
                 hold_days  = i - trade['entry_index']
 
-                # Apply trailing stop
                 trade['_curr_price'] = curr_price
                 trade = self._apply_trailing_stop(trade)
                 sl = trade['stop_loss']
@@ -286,21 +266,21 @@ class SwingTradingBot:
                     net_pnl    = (exit_price - ep) * ps - commission
 
                     all_trades.append({
-                        'symbol':       sym,
-                        'entry_date':   trade['entry_date'],
-                        'exit_date':    bar['datetime'],
-                        'entry_price':  ep,
-                        'exit_price':   exit_price,
+                        'symbol':        sym,
+                        'entry_date':    trade['entry_date'],
+                        'exit_date':     bar['datetime'],
+                        'entry_price':   ep,
+                        'exit_price':    exit_price,
                         'position_size': ps,
-                        'exit_reason':  exit_reason,
-                        'gross_pnl':    (exit_price - ep) * ps,
-                        'commission':   commission,
-                        'net_pnl':      net_pnl,
-                        'result':       'WIN' if net_pnl > 0 else 'LOSS',
-                        'hold_days':    hold_days,
-                        'entry_type':   trade['entry_type'],
+                        'exit_reason':   exit_reason,
+                        'gross_pnl':     (exit_price - ep) * ps,
+                        'commission':    commission,
+                        'net_pnl':       net_pnl,
+                        'result':        'WIN' if net_pnl > 0 else 'LOSS',
+                        'hold_days':     hold_days,
+                        'entry_type':    trade['entry_type'],
                         'market_regime': trade['market_regime'],
-                        'confidence':   trade.get('confidence', 1),
+                        'confidence':    trade.get('confidence', 1),
                     })
                     self.current_equity += net_pnl
                     self.peak_equity     = max(self.peak_equity, self.current_equity)
@@ -310,12 +290,10 @@ class SwingTradingBot:
             for sym in to_exit:
                 del open_trades[sym]
 
-            # ── Circuit breaker ────────────────────────────────────────────
             if not self._drawdown_ok():
                 equity_curve.append({'bar': i, 'equity': self.current_equity})
                 continue
 
-            # ── Scan for new entries ───────────────────────────────────────
             if len(open_trades) < self.max_open_trades and self.current_equity > 0:
                 sector_counts = self._sector_counts(open_trades)
 
@@ -341,15 +319,15 @@ class SwingTradingBot:
                             capital = det['entry_price'] * det['position_size']
                             if capital <= self.current_equity * 0.30:
                                 open_trades[sym] = {
-                                    'entry_price':  det['entry_price'],
-                                    'stop_loss':    det['stop_loss'],
-                                    'target':       det['target_price'],
+                                    'entry_price':   det['entry_price'],
+                                    'stop_loss':     det['stop_loss'],
+                                    'target':        det['target_price'],
                                     'position_size': det['position_size'],
-                                    'entry_date':   all_dfs[sym].iloc[i]['datetime'],
-                                    'entry_index':  i,
-                                    'entry_type':   det['entry_type'],
+                                    'entry_date':    all_dfs[sym].iloc[i]['datetime'],
+                                    'entry_index':   i,
+                                    'entry_type':    det['entry_type'],
                                     'market_regime': regime,
-                                    'confidence':   det.get('confidence', 1),
+                                    'confidence':    det.get('confidence', 1),
                                 }
                                 sector_counts[sym_sector] = sector_counts.get(sym_sector, 0) + 1
                                 if len(open_trades) >= self.max_open_trades:
@@ -359,7 +337,6 @@ class SwingTradingBot:
 
             equity_curve.append({'bar': i, 'equity': self.current_equity})
 
-        # ── Output ─────────────────────────────────────────────────────────
         if all_trades:
             trades_df = pd.DataFrame(all_trades)
             eq_df     = pd.DataFrame(equity_curve)
@@ -369,7 +346,6 @@ class SwingTradingBot:
             logger.warning("⚠️ No trades generated")
             return None
 
-    # ─────────────────────────────────────────────────────────────────────────
     def _print_summary(self, trades_df, eq_df=None):
         wins   = (trades_df['result'] == 'WIN').sum()
         losses = (trades_df['result'] == 'LOSS').sum()
@@ -389,8 +365,8 @@ class SwingTradingBot:
             rolling_max = eq.cummax()
             max_dd      = ((rolling_max - eq) / rolling_max).max() * 100
 
-        avg_hold = trades_df['hold_days'].mean()
-        trades_per_month = total / (600 / 21)   # approx trading days → months
+        avg_hold         = trades_df['hold_days'].mean()
+        trades_per_month = total / (600 / 21)
 
         logger.info(f"\n{'='*70}")
         logger.info("PORTFOLIO BACKTEST RESULTS — HIGH-RISK v3")
