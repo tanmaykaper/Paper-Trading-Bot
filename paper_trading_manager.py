@@ -496,7 +496,42 @@ class PaperTradingManager:
             df.to_csv(self.equity_csv_path, index=False)
         except Exception as e:
             logger.error(f"Error logging daily equity: {e}")
-
+def force_close_trade(self, trade_id: str, exit_price: float,
+                      exit_reason: str = 'Manual') -> bool:
+    try:
+        df   = self._load_csv()
+        mask = df['trade_id'] == trade_id
+        if not mask.any():
+            logger.warning(f"⚠️ force_close: trade_id {trade_id} not found")
+            return False
+        row = df[mask].iloc[0]
+        if row['status'] != 'OPEN':
+            return False
+        ep, ps, today = float(row['entry_price']), int(row['position_size']), datetime.now()
+        commission = ps * self.commission_per_share * 2
+        gross_pnl  = (exit_price - ep) * ps
+        net_pnl    = gross_pnl - commission
+        entry_dt   = _parse_date(row['entry_date'])
+        hold_days  = (today - entry_dt).days if entry_dt else 0
+        df.loc[mask, 'status']      = 'CLOSED'
+        df.loc[mask, 'exit_date']   = today.strftime('%Y-%m-%d')
+        df.loc[mask, 'exit_price']  = round(exit_price, 2)
+        df.loc[mask, 'exit_reason'] = exit_reason
+        df.loc[mask, 'gross_pnl']   = round(gross_pnl, 2)
+        df.loc[mask, 'commission']  = round(commission, 2)
+        df.loc[mask, 'net_pnl']     = round(net_pnl,    2)
+        df.loc[mask, 'hold_days']   = hold_days
+        self.realised_pnl     += net_pnl
+        self.deployed_capital  = max(0.0, self.deployed_capital - ep * ps)
+        self._save_csv(df)
+        icon = '🟢' if net_pnl >= 0 else '🔴'
+        logger.info(f"  {icon} FORCE-CLOSED {row['symbol']} | {exit_reason} | "
+                    f"₹{ep:.2f}→₹{exit_price:.2f} | P&L: ₹{net_pnl:+,.2f}")
+        return True
+    except Exception as e:
+        logger.error(f"Error in force_close_trade: {e}")
+        return False
+        
     def get_open_trades(self):
         df = self._load_csv()
         return df[df['status'] == 'OPEN'].to_dict('records')
