@@ -430,6 +430,44 @@ class PaperTradingManager:
             logger.error(f"Error closing position {trade_id}: {e}")
             return False
 
+    def get_aggregate_open_risk(self):
+        """
+        Total capital currently 'at stake' across all OPEN positions — i.e.
+        the sum of (entry_price - stop_loss) * position_size for each open
+        trade, which is what you'd actually lose if every stop-loss hit at
+        once. This is the basis for portfolio-level risk budgeting: sizing
+        each trade individually as 2.5% of equity doesn't bound the total
+        book risk if 5+ trades are open simultaneously, especially when
+        several of them may be correlated (same sector/regime).
+        """
+        try:
+            df     = self._load_csv()
+            open_t = df[df['status'] == 'OPEN'].copy()
+            if len(open_t) == 0:
+                return 0.0
+            open_t['entry_price']   = pd.to_numeric(open_t['entry_price'],   errors='coerce').fillna(0)
+            open_t['stop_loss']     = pd.to_numeric(open_t['stop_loss'],     errors='coerce').fillna(0)
+            open_t['position_size'] = pd.to_numeric(open_t['position_size'], errors='coerce').fillna(0)
+            risk = ((open_t['entry_price'] - open_t['stop_loss']) * open_t['position_size']).sum()
+            return max(0.0, float(risk))
+        except Exception as e:
+            logger.error(f"Error in get_aggregate_open_risk: {e}")
+            return 0.0
+
+    def get_open_positions_by_sector(self, sector_map):
+        """
+        Returns {sector: [symbols]} for currently OPEN positions, using the
+        same SECTOR_MAP the rest of the codebase already defines. Symbols
+        not present in sector_map are grouped under their own symbol (so an
+        unmapped name never silently counts against some other sector's cap).
+        """
+        open_trades = self.get_open_trades()
+        by_sector = {}
+        for t in open_trades:
+            sector = sector_map.get(t['symbol'], t['symbol'])
+            by_sector.setdefault(sector, []).append(t['symbol'])
+        return by_sector
+
     # ── Reporting ─────────────────────────────────────────────────────────────
 
     def print_open_positions(self, latest_prices=None):
