@@ -78,16 +78,37 @@ class PaperTradingManager:
                 'trade_id', 'symbol', 'side', 'entry_date', 'entry_price',
                 'stop_loss', 'target_price', 'position_size', 'status',
                 'exit_date', 'exit_price', 'exit_reason',
-                'gross_pnl', 'commission', 'net_pnl', 'hold_days', 'entry_type'
+                'gross_pnl', 'commission', 'net_pnl', 'hold_days', 'entry_type',
+                'confidence', 'risk_reward_ratio',
             ]).to_csv(self.csv_path, index=False)
             logger.info(f"✓ Created {self.csv_path}")
 
+        _EQUITY_COLS = [
+            'date', 'free_cash', 'deployed_capital', 'unrealised_pnl',
+            'total_portfolio_value', 'trades_open', 'trades_closed',
+            'realised_pnl', 'daily_realised_pnl'
+        ]
+
         if not os.path.exists(self.equity_csv_path):
-            pd.DataFrame(columns=[
-                'date', 'free_cash', 'deployed_capital', 'unrealised_pnl',
-                'total_portfolio_value', 'trades_open', 'trades_closed',
-                'realised_pnl', 'daily_realised_pnl'
-            ]).to_csv(self.equity_csv_path, index=False)
+            pd.DataFrame(columns=_EQUITY_COLS).to_csv(self.equity_csv_path, index=False)
+        else:
+            # Migrate legacy schemas (e.g. an older version of this file wrote
+            # different column names like 'equity'/'daily_pnl'/'cumulative_pnl').
+            # Without this, concat-by-column-name silently leaves the current
+            # schema's columns blank on every new row — exactly what happened
+            # to unrealised_pnl/total_portfolio_value in this bot's history.
+            try:
+                existing = pd.read_csv(self.equity_csv_path)
+                missing_cols = [c for c in _EQUITY_COLS if c not in existing.columns]
+                if missing_cols:
+                    for c in missing_cols:
+                        existing[c] = np.nan
+                    # keep legacy columns (don't destroy history) but ensure
+                    # every current-schema column exists so writes never drift
+                    existing.to_csv(self.equity_csv_path, index=False)
+                    logger.info(f"✓ Migrated {self.equity_csv_path} schema — added columns: {missing_cols}")
+            except Exception as e:
+                logger.error(f"Could not migrate equity CSV schema: {e}")
 
     def _load_csv(self):
         """Load and normalise the trades CSV, fixing legacy column issues."""
@@ -102,9 +123,24 @@ class PaperTradingManager:
             df = df.drop(columns=['entry_datr'])
 
         for col in ['exit_date', 'exit_price', 'exit_reason',
-                    'gross_pnl', 'commission', 'net_pnl', 'hold_days']:
+                    'gross_pnl', 'commission', 'net_pnl', 'hold_days',
+                    'confidence', 'risk_reward_ratio']:
             if col not in df.columns:
                 df[col] = np.nan
+
+        # ── Critical dtype fix ──────────────────────────────────────────────
+        # When every OPEN row has an empty exit_date/exit_reason, pandas'
+        # read_csv infers those columns as float64 (all-NaN). Newer pandas
+        # (3.x) then REFUSES to assign a string into a float64 column via
+        # .loc[...] and raises TypeError. That crash was happening on every
+        # single attempt to close a trade — silently swallowed by the
+        # try/except in update_trades() — which is why trades opened months
+        # ago never closed even when prices were fetched successfully.
+        # Forcing these to 'object' dtype makes string assignment always safe,
+        # regardless of pandas version or how many rows are currently empty.
+        for col in ['exit_date', 'exit_reason', 'status', 'symbol', 'side', 'entry_type']:
+            if col in df.columns:
+                df[col] = df[col].astype(object)
 
         return df
 
@@ -192,10 +228,15 @@ class PaperTradingManager:
         return f"{symbol}_{datetime.now().strftime('%Y%m%d')}_{self.trade_counter}"
 
     def open_trade(self, symbol, entry_price, stop_loss, target_price,
-                   position_size, entry_type):
+                   position_size, entry_type, confidence=None, risk_reward_ratio=None):
         """
         Open a new paper trade with capital and slot checks.
         Automatically reduces position size to fit available free cash.
+
+        confidence / risk_reward_ratio (optional): recorded from the signal
+        that generated this trade, so open positions can later be scored
+        fairly against new candidate signals (used by position-replacement
+        logic in the runner) instead of guessing at their quality.
         """
         try:
             df          = self._load_csv()
@@ -241,6 +282,8 @@ class PaperTradingManager:
                 'net_pnl':       '',
                 'hold_days':     '',
                 'entry_type':    entry_type,
+                'confidence':        confidence if confidence is not None else '',
+                'risk_reward_ratio': round(risk_reward_ratio, 2) if risk_reward_ratio is not None else '',
             }])
 
             df = pd.concat([df, new_trade], ignore_index=True)
@@ -339,6 +382,53 @@ class PaperTradingManager:
         except Exception as e:
             logger.error(f"Error updating trades: {e}")
             return 0
+
+    def close_position(self, trade_id, exit_price, exit_reason):
+        """
+        Close one specific OPEN trade by id at a given price. Used for
+        position replacement (swapping a weak/stale holding for a
+        materially better new signal when all slots are full) rather than
+        only closing on SL/target/time-exit.
+        """
+        try:
+            df   = self._load_csv()
+            mask = (df['trade_id'] == trade_id) & (df['status'] == 'OPEN')
+            if not mask.any():
+                logger.warning(f"⚠️ close_position: no OPEN trade with id {trade_id}")
+                return False
+
+            row           = df.loc[mask].iloc[0]
+            entry_price   = float(row['entry_price'])
+            position_size = int(row['position_size'])
+            entry_dt      = _parse_date(row['entry_date'])
+            hold_days     = (datetime.now() - entry_dt).days if entry_dt else 0
+
+            commission = position_size * self.commission_per_share * 2
+            gross_pnl  = (exit_price - entry_price) * position_size
+            net_pnl    = gross_pnl - commission
+
+            df.loc[mask, 'status']      = 'CLOSED'
+            df.loc[mask, 'exit_date']   = datetime.now().strftime('%Y-%m-%d')
+            df.loc[mask, 'exit_price']  = round(exit_price, 2)
+            df.loc[mask, 'exit_reason'] = exit_reason
+            df.loc[mask, 'gross_pnl']   = round(gross_pnl, 2)
+            df.loc[mask, 'commission']  = round(commission, 2)
+            df.loc[mask, 'net_pnl']     = round(net_pnl, 2)
+            df.loc[mask, 'hold_days']   = hold_days
+
+            self._save_csv(df)
+            self.realised_pnl     += net_pnl
+            self.deployed_capital  = max(0.0, self.deployed_capital - entry_price * position_size)
+
+            icon = '🟢' if net_pnl >= 0 else '🔴'
+            logger.info(
+                f"  {icon} CLOSED {row['symbol']} (replaced) | {exit_reason} | "
+                f"₹{entry_price:.2f}→₹{exit_price:.2f} | P&L: ₹{net_pnl:+,.2f}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error closing position {trade_id}: {e}")
+            return False
 
     # ── Reporting ─────────────────────────────────────────────────────────────
 
@@ -501,3 +591,122 @@ class PaperTradingManager:
     def get_open_trades(self):
         df = self._load_csv()
         return df[df['status'] == 'OPEN'].to_dict('records')
+
+    # ── Maintenance ───────────────────────────────────────────────────────────
+
+    def force_close_stale(self, latest_prices, max_hold_days=15, reason_suffix=""):
+        """
+        Immediately close any OPEN trade older than max_hold_days, using the
+        best price available (live price if we have it, else the entry price
+        as a last-resort fallback so the position isn't left open forever).
+
+        This exists as a manual unstick tool: if price fetching silently fails
+        for weeks/months (as it did before the retry/bulk-fetch fix), positions
+        can sit open far past their intended hold window with no error raised.
+        Run this once after deploying the fetch fixes to clear the backlog,
+        rather than waiting for the ordinary daily update_trades() cycle.
+
+        Returns list of dicts describing what was closed.
+        """
+        try:
+            df          = self._load_csv()
+            open_trades = df[df['status'] == 'OPEN'].copy()
+            today       = datetime.now()
+            closed_info = []
+
+            for _, trade in open_trades.iterrows():
+                symbol       = trade['symbol']
+                entry_dt     = _parse_date(trade['entry_date'])
+                hold_days    = (today - entry_dt).days if entry_dt else 9999
+
+                if hold_days <= max_hold_days:
+                    continue
+
+                entry_price   = float(trade['entry_price'])
+                position_size = int(trade['position_size'])
+                stop_loss     = float(trade['stop_loss'])
+                target        = float(trade['target_price'])
+
+                if symbol in latest_prices:
+                    exit_price = float(latest_prices[symbol])
+                    reason     = f'Time Exit (maintenance, {hold_days}d held){reason_suffix}'
+                else:
+                    # No live price available even now — fall back to entry
+                    # price (net_pnl = -commission only) so the slot frees up
+                    # rather than staying stuck indefinitely. Flag it clearly.
+                    exit_price = entry_price
+                    reason     = f'Time Exit (maintenance, NO PRICE — closed flat, {hold_days}d held){reason_suffix}'
+                    logger.warning(f"⚠️ {symbol}: no live price available — closing flat at entry price")
+
+                # Respect SL/target if the live price already breached them
+                if exit_price <= stop_loss:
+                    exit_price, reason = stop_loss, f'SL Hit (maintenance, {hold_days}d held){reason_suffix}'
+                elif exit_price >= target:
+                    exit_price, reason = target, f'Target Hit (maintenance, {hold_days}d held){reason_suffix}'
+
+                commission = position_size * self.commission_per_share * 2
+                gross_pnl  = (exit_price - entry_price) * position_size
+                net_pnl    = gross_pnl - commission
+
+                mask = df['trade_id'] == trade['trade_id']
+                df.loc[mask, 'status']      = 'CLOSED'
+                df.loc[mask, 'exit_date']   = today.strftime('%Y-%m-%d')
+                df.loc[mask, 'exit_price']  = round(exit_price, 2)
+                df.loc[mask, 'exit_reason'] = reason
+                df.loc[mask, 'gross_pnl']   = round(gross_pnl, 2)
+                df.loc[mask, 'commission']  = round(commission, 2)
+                df.loc[mask, 'net_pnl']     = round(net_pnl, 2)
+                df.loc[mask, 'hold_days']   = hold_days
+
+                self.realised_pnl     += net_pnl
+                self.deployed_capital  = max(0.0, self.deployed_capital - entry_price * position_size)
+
+                closed_info.append({
+                    'symbol': symbol, 'hold_days': hold_days,
+                    'entry_price': entry_price, 'exit_price': exit_price,
+                    'net_pnl': round(net_pnl, 2), 'reason': reason,
+                })
+                icon = '🟢' if net_pnl >= 0 else '🔴'
+                logger.info(
+                    f"  {icon} MAINTENANCE CLOSE {symbol} | {reason} | "
+                    f"₹{entry_price:.2f}→₹{exit_price:.2f} | P&L: ₹{net_pnl:+,.2f}"
+                )
+
+            if closed_info:
+                self._save_csv(df)
+
+            return closed_info
+
+        except Exception as e:
+            logger.error(f"Error in force_close_stale: {e}")
+            return []
+
+    def price_fetch_health_check(self, latest_prices):
+        """
+        Loud, explicit report on whether exit-checks actually had the data
+        they needed this run. Call this every run and treat a bad result as
+        a real incident, not background noise — the original 3-month-silent
+        failure happened precisely because nothing surfaced this.
+        """
+        open_trades   = self.get_open_trades()
+        held_symbols  = [t['symbol'] for t in open_trades]
+        missing       = [s for s in held_symbols if s not in latest_prices]
+
+        report = {
+            'held_positions':   len(held_symbols),
+            'prices_resolved':  len(held_symbols) - len(missing),
+            'missing_symbols':  missing,
+            'healthy':          len(missing) == 0,
+        }
+
+        if not report['healthy']:
+            logger.error(
+                f"🚨 HEALTH CHECK FAILED: {len(missing)}/{len(held_symbols)} open positions "
+                f"have NO live price this run: {missing}. Exit checks for these were SKIPPED. "
+                f"If this repeats for multiple consecutive runs, price fetching is broken "
+                f"and positions will silently stay open indefinitely."
+            )
+        else:
+            logger.info(f"✓ HEALTH CHECK OK: all {len(held_symbols)} open positions priced successfully")
+
+        return report
