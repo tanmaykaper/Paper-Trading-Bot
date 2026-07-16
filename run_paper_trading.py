@@ -1,42 +1,41 @@
-# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v5
+# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v6
 # ─────────────────────────────────────────────────────────────────────────────
-# This is now the ONE canonical runner. (run_paper_tradingjbkb.py has been
-# removed — it imported LARGECAP_SYMBOLS / SignalGenerator.score_signal, which
-# don't exist anywhere in this codebase, so it could never have run.)
+# v6 change — portfolio-level risk management (previously: v5, execution
+# reliability). What was found and fixed this round:
 #
-# What changed vs the previous version, and why — this directly targets the
-# root causes behind "same 5 stocks held for months, ₹0 realised P&L":
+#   1. SIZING BUG: position sizing was based on paper_mgr.free_cash instead
+#      of total portfolio equity. Since free_cash shrinks every time capital
+#      moves from cash into an open stock position (even though that capital
+#      hasn't left the portfolio — it's just in a different form), each
+#      successive trade in a run was sized against a progressively smaller,
+#      wrong denominator. Simulated impact: by the 5th trade in a session,
+#      the risk budget was ~90% smaller than the intended 2.5%-of-equity
+#      target. Fixed: sizing now uses total mark-to-market equity (free cash
+#      + deployed capital + unrealised P&L), which is also what makes
+#      realised profit actually compound into larger future bets — this is
+#      the "how money gets re-added to the portfolio for further investment"
+#      mechanism.
 #
-#   1. ROOT CAUSE FIX — dtype crash on close (paper_trading_manager.py):
-#      When every OPEN row has an empty exit_date/exit_reason, pandas infers
-#      those columns as float64. Newer pandas then refuses to assign a string
-#      into a float64 column and raises. That exception was silently caught
-#      by the old try/except in update_trades(), so trades_closed was ALWAYS
-#      0 — regardless of whether prices were available. This was the primary
-#      cause and is now fixed at the source in _load_csv().
+#   2. NO PORTFOLIO-LEVEL RISK CONTROLS IN LIVE TRADING: SECTOR_MAP,
+#      MAX_SECTOR_EXPOSURE, and a drawdown circuit breaker already existed
+#      in swing_trading_bot.py — but only inside the internal run_backtest()
+#      simulation loop. The live path (this file) never used them, so the
+#      live bot could end up concentrated in one sector, or kept opening
+#      new trades through a large drawdown, with nothing to stop it. Fixed:
+#      both are now wired into live execution (imported, not reimplemented).
 #
-#   2. Bulk, retrying price fetch (get_ltp_bulk): one batched request for the
-#      whole universe instead of one HTTP call per symbol in a loop — far
-#      less likely to get rate-limited by Yahoo Finance from a shared IP
-#      (e.g. GitHub Actions), and much faster.
+#   3. NO AGGREGATE RISK BUDGET: each trade was sized to risk ~2.5% of
+#      equity in isolation, but nothing capped the SUM of risk across all
+#      simultaneously open positions. 5 uncorrelated 2.5% bets is one thing;
+#      5 correlated bets (e.g. same sector) behave more like one large bet.
+#      Fixed: a portfolio-level risk budget (MAX_PORTFOLIO_RISK_PCT of
+#      equity) now caps total capital-at-stake across the whole book —
+#      new trades get sized down (or skipped) to fit within what's left.
 #
-#   3. Exit checks can no longer fail silently: a held position that's still
-#      missing a price after bulk + individual retries gets a loud, explicit
-#      HEALTH CHECK error (and an email alert if credentials are configured)
-#      instead of just being skipped with a debug-level log line nobody sees.
-#
-#   4. force_close_stale() safety net: any OPEN trade older than
-#      max_hold_days gets closed even in the rare case a live price still
-#      isn't available (falls back to entry price rather than staying open
-#      indefinitely). This is what unsticks the current backlog on first run.
-#
-#   5. Expanded scan universe (large-cap + mid-cap) — no longer hardcoded to
-#      ~15 names, so signal generation isn't the bottleneck either.
-#
-#   6. Position replacement: when all slots are full, a materially stronger
-#      new signal can swap out the weakest open position — subject to
-#      profit-protection and near-target guards — instead of being dropped
-#      on the floor while a mediocre position sits untouched for months.
+# Carried over from v5 (still true — see CHANGES_step1.md for full detail):
+# resilient bulk price fetching, dtype-crash fix for closing trades, health
+# checks + alerting, stale-position safety net, expanded scan universe,
+# position replacement for full slots.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import logging
@@ -45,7 +44,7 @@ import os
 import pandas as pd
 from datetime import datetime
 
-from swing_trading_bot import SwingTradingBot
+from swing_trading_bot import SwingTradingBot, SECTOR_MAP, MAX_SECTOR_EXPOSURE, MAX_DRAWDOWN_DEFAULT
 from paper_trading_manager import PaperTradingManager
 from notification_handler import NotificationHandler
 
@@ -63,6 +62,18 @@ MAX_HOLD_DAYS   = 15
 
 TRADES_CSV = 'paper_trades.csv'
 EQUITY_CSV = 'daily_equity.csv'
+
+# Portfolio-level risk budget — caps TOTAL capital-at-stake (sum of every
+# open position's entry-to-stop-loss distance) as a % of equity, on top of
+# each individual trade's own 2.5% (RISK_PROFILE in signal_generator.py).
+# Without this, N simultaneously-open trades each risking 2.5% independently
+# could add up to N x 2.5% of correlated exposure with no ceiling at all.
+MAX_PORTFOLIO_RISK_PCT = 0.10   # 10% of total equity, worst case, across the whole book
+
+# MAX_SECTOR_EXPOSURE and MAX_DRAWDOWN_DEFAULT are imported from
+# swing_trading_bot.py rather than redefined here — they already existed
+# there (used only by the internal backtest loop) and are now wired into
+# live trading too, instead of duplicating the same numbers in two places.
 
 # Replacement gate — a new signal must clear ALL of these to bump an
 # existing open position out of its slot:
@@ -132,13 +143,37 @@ def _existing_position_score(trade):
     return conf * rr
 
 
-def find_replaceable_position(open_trades, new_details, latest_prices):
+def get_peak_equity(equity_csv_path, floor):
+    """
+    Highest total_portfolio_value ever recorded in the equity log, used as
+    the reference point for the drawdown circuit breaker. Falls back to
+    `floor` (INITIAL_EQUITY) if there's no usable history yet.
+    """
+    if not os.path.exists(equity_csv_path):
+        return floor
+    try:
+        df = pd.read_csv(equity_csv_path)
+        if 'total_portfolio_value' not in df.columns:
+            return floor
+        vals = pd.to_numeric(df['total_portfolio_value'], errors='coerce').dropna()
+        if len(vals) == 0:
+            return floor
+        return max(floor, float(vals.max()))
+    except Exception:
+        return floor
+
+
+def find_replaceable_position(open_trades, new_details, latest_prices, sector_filter=None):
     """
     Return the weakest open trade eligible for replacement by new_details,
     or None if nothing qualifies. ALL of these must hold:
       1. new signal's composite score > weakest existing score * REPLACE_SCORE_MULTIPLE
       2. that position's unrealised gain < PROTECT_PROFIT_PCT (don't cut winners)
       3. that position's progress toward its own target < PROTECT_PROGRESS_PCT
+      4. if sector_filter is given, only positions in that sector are considered
+         (used when the new signal's own sector is already at its exposure cap —
+         it may only swap in by replacing a position in the SAME sector, so the
+         swap is sector-neutral rather than adding new concentration)
     """
     new_score = _composite_score(new_details)
     candidates = []
@@ -147,6 +182,8 @@ def find_replaceable_position(open_trades, new_details, latest_prices):
         sym = t['symbol']
         if sym not in latest_prices:
             continue  # can't safely evaluate without a current price
+        if sector_filter is not None and SECTOR_MAP.get(sym, sym) != sector_filter:
+            continue
 
         ep, sl, tp = float(t['entry_price']), float(t['stop_loss']), float(t['target_price'])
         cmp        = float(latest_prices[sym])
@@ -235,27 +272,68 @@ def run_eod():
             ),
         )
 
-    # ── Step 4: Market regime ─────────────────────────────────────────────────
-    logger.info("\n[Step 4] Checking Nifty 50 market regime...")
+    # ── Step 4: Portfolio equity & risk state ─────────────────────────────────
+    # Computed AFTER exits so it reflects today's true state, and used as the
+    # basis for position sizing instead of paper_mgr.free_cash (see header
+    # comment — sizing off free_cash under-sizes later trades in a run by up
+    # to ~90% as slots fill, purely as an accounting artifact).
+    logger.info("\n[Step 4] Computing portfolio equity & risk state...")
+    summary      = paper_mgr.get_summary(latest_prices)
+    total_equity = summary.get('total_portfolio_value', INITIAL_EQUITY)
+    peak_equity  = max(get_peak_equity(EQUITY_CSV, floor=INITIAL_EQUITY), total_equity)
+    drawdown_pct = (peak_equity - total_equity) / peak_equity if peak_equity > 0 else 0.0
+
+    current_agg_risk   = paper_mgr.get_aggregate_open_risk()
+    portfolio_risk_pct = (current_agg_risk / total_equity) if total_equity > 0 else 0.0
+    sector_counts       = {s: len(syms) for s, syms in
+                            paper_mgr.get_open_positions_by_sector(SECTOR_MAP).items()}
+
+    logger.info(f"  Total equity          : ₹{total_equity:,.2f}  (peak: ₹{peak_equity:,.2f})")
+    logger.info(f"  Drawdown from peak     : {drawdown_pct*100:.1f}%  (circuit breaker at {MAX_DRAWDOWN_DEFAULT*100:.0f}%)")
+    logger.info(f"  Aggregate open risk    : ₹{current_agg_risk:,.2f}  ({portfolio_risk_pct*100:.1f}% of equity, cap {MAX_PORTFOLIO_RISK_PCT*100:.0f}%)")
+    logger.info(f"  Sector exposure        : {sector_counts or 'none'}  (cap {MAX_SECTOR_EXPOSURE}/sector)")
+
+    circuit_breaker_active = drawdown_pct >= MAX_DRAWDOWN_DEFAULT
+    if circuit_breaker_active:
+        logger.warning(
+            f"  🛑 DRAWDOWN CIRCUIT BREAKER ACTIVE: equity is down {drawdown_pct*100:.1f}% "
+            f"from its peak (₹{peak_equity:,.2f} → ₹{total_equity:,.2f}), ≥ the "
+            f"{MAX_DRAWDOWN_DEFAULT*100:.0f}% halt threshold. Skipping new entries this run "
+            f"— existing positions still get their normal exit checks."
+        )
+        alert_notifier.send_alert(
+            subject="Drawdown circuit breaker active — new entries paused",
+            body=(
+                f"Portfolio equity is down {drawdown_pct*100:.1f}% from its peak "
+                f"(₹{peak_equity:,.2f} → ₹{total_equity:,.2f}). New trade entries are "
+                f"paused until this recovers. Existing positions continue to be "
+                f"monitored and will still exit normally on stop-loss/target/time."
+            ),
+        )
+
+    # ── Step 5: Market regime ─────────────────────────────────────────────────
+    logger.info("\n[Step 5] Checking Nifty 50 market regime...")
     regime = bot._get_market_regime(days=300)
     logger.info(f"  Regime: {regime}")
 
-    # ── Step 5: Scan for new signals (with position replacement) ─────────────
+    # ── Step 6: Scan for new signals (risk-budgeted, sector-capped, with
+    #            position replacement) ────────────────────────────────────────
     open_trades = paper_mgr.get_open_trades()
     open_count  = len(open_trades)
     slots_free  = MAX_OPEN_TRADES - open_count
 
-    logger.info(f"\n[Step 5] Scanning {len(SCAN_UNIVERSE)} symbols for new signals...")
-    logger.info(
-        f"  Open: {open_count}/{MAX_OPEN_TRADES} | "
-        f"Slots free: {slots_free} | Free cash: ₹{paper_mgr.free_cash:,.2f}"
-    )
+    logger.info(f"\n[Step 6] Scanning {len(SCAN_UNIVERSE)} symbols for new signals...")
+    logger.info(f"  Open: {open_count}/{MAX_OPEN_TRADES} | Slots free: {slots_free} | Free cash: ₹{paper_mgr.free_cash:,.2f}")
 
-    new_trades      = 0
-    replacements     = 0
-    signals_found   = []
+    new_trades    = 0
+    replacements  = 0
+    skipped_risk  = 0
+    skipped_sector = 0
+    signals_found = []
 
-    if paper_mgr.free_cash < 500:
+    if circuit_breaker_active:
+        logger.info("  Skipping scan entirely — drawdown circuit breaker is active")
+    elif paper_mgr.free_cash < 500:
         logger.info(f"  Free cash ₹{paper_mgr.free_cash:.0f} too low — skipping scan")
     else:
         for symbol in SCAN_UNIVERSE:
@@ -269,16 +347,51 @@ def run_eod():
                 fund = bot.get_fundamentals_safe(symbol)
                 sig, details = bot.signal_gen.generate_signal(
                     df, symbol, fund,
-                    current_equity=paper_mgr.free_cash,
+                    current_equity=total_equity,   # true equity, not free_cash — see header
                     market_regime=regime,
                 )
 
                 if sig != 'BUY':
                     continue
 
-                signals_found.append((symbol, details))
+                # Defensive: compute risk directly from entry/stop/size rather
+                # than trusting a pre-baked 'risk' key in details — keeps this
+                # robust even if the signal generator's return schema changes.
+                risk_per_share = details['entry_price'] - details['stop_loss']
+                details['risk'] = round(details.get('position_size', 0) * risk_per_share, 2)
+                details.setdefault('reward', round(
+                    details.get('position_size', 0) * (details['target_price'] - details['entry_price']), 2))
 
-                if slots_free > 0:
+                signals_found.append((symbol, details))
+                sector = SECTOR_MAP.get(symbol, symbol)
+
+                # ── Portfolio risk budget: shrink or skip to fit what's left ──
+                risk_budget_left = MAX_PORTFOLIO_RISK_PCT * total_equity - current_agg_risk
+                live_risk_pct = (current_agg_risk / total_equity) if total_equity > 0 else 0.0
+                if risk_budget_left <= 0:
+                    if skipped_risk < 3:
+                        logger.info(f"    {symbol}: skipped — portfolio risk budget exhausted "
+                                    f"({live_risk_pct*100:.1f}% ≥ {MAX_PORTFOLIO_RISK_PCT*100:.0f}% cap)")
+                    elif skipped_risk == 3:
+                        logger.info("    ... further risk-budget skips suppressed (see summary count below)")
+                    skipped_risk += 1
+                    continue
+                if details['risk'] > risk_budget_left:
+                    shrunk_size = max(0, int(risk_budget_left / risk_per_share)) if risk_per_share > 0 else 0
+                    if shrunk_size < 1:
+                        logger.info(f"    {symbol}: skipped — no room left in portfolio risk budget")
+                        skipped_risk += 1
+                        continue
+                    details['position_size'] = shrunk_size
+                    details['risk']   = round(shrunk_size * risk_per_share, 2)
+                    details['reward'] = round(shrunk_size * (details['target_price'] - details['entry_price']), 2)
+                    logger.info(f"    {symbol}: position size reduced to fit remaining risk budget "
+                                f"(₹{risk_budget_left:.0f} left)")
+
+                # ── Sector cap: at limit → only allowed via same-sector swap ──
+                sector_at_cap = sector_counts.get(sector, 0) >= MAX_SECTOR_EXPOSURE
+
+                if slots_free > 0 and not sector_at_cap:
                     opened = paper_mgr.open_trade(
                         symbol=symbol,
                         entry_price=details['entry_price'],
@@ -293,11 +406,21 @@ def run_eod():
                         new_trades  += 1
                         slots_free  -= 1
                         held_symbols.add(symbol)
+                        current_agg_risk += details['risk']
+                        sector_counts[sector] = sector_counts.get(sector, 0) + 1
                 else:
-                    # No free slots — see if this signal is strong enough to
-                    # replace the weakest eligible open position.
+                    if sector_at_cap and slots_free > 0:
+                        logger.info(f"    {symbol}: sector '{sector}' at cap ({MAX_SECTOR_EXPOSURE}) "
+                                    f"— can only swap in via same-sector replacement")
+                        skipped_sector += 1
+
+                    # No free slots (or sector capped): look for a weak position
+                    # to replace. If the sector itself is capped, the swap MUST
+                    # come from within that same sector (sector-neutral), so it
+                    # never increases concentration beyond the cap.
                     weak = find_replaceable_position(
-                        paper_mgr.get_open_trades(), details, latest_prices
+                        paper_mgr.get_open_trades(), details, latest_prices,
+                        sector_filter=sector if sector_at_cap else None,
                     )
                     if weak is not None:
                         exit_price = float(latest_prices.get(weak['symbol'], weak['entry_price']))
@@ -321,6 +444,11 @@ def run_eod():
                                 replacements += 1
                                 held_symbols.discard(weak['symbol'])
                                 held_symbols.add(symbol)
+                                weak_risk = (float(weak['entry_price']) - float(weak['stop_loss'])) * int(weak['position_size'])
+                                current_agg_risk += details['risk'] - max(0.0, weak_risk)
+                                weak_sector = SECTOR_MAP.get(weak['symbol'], weak['symbol'])
+                                sector_counts[weak_sector] = max(0, sector_counts.get(weak_sector, 1) - 1)
+                                sector_counts[sector] = sector_counts.get(sector, 0) + 1
 
             except Exception as e:
                 logger.error(f"  Error on {symbol}: {e}")
@@ -336,13 +464,14 @@ def run_eod():
             )
     else:
         logger.info("  No new BUY signals today")
-    logger.info(f"  New trades opened: {new_trades}  (of which replacements: {replacements})")
+    logger.info(f"  New trades opened: {new_trades}  (replacements: {replacements}, "
+                f"skipped on risk budget: {skipped_risk}, skipped on sector cap: {skipped_sector})")
 
-    # ── Step 6: Equity snapshot ───────────────────────────────────────────────
-    logger.info("\n[Step 6] Logging equity snapshot...")
+    # ── Step 7: Equity snapshot ───────────────────────────────────────────────
+    logger.info("\n[Step 7] Logging equity snapshot...")
     paper_mgr.log_daily_equity(latest_prices)
 
-    # ── Step 7: Portfolio summary ─────────────────────────────────────────────
+    # ── Step 8: Portfolio summary ─────────────────────────────────────────────
     _print_summary(paper_mgr, latest_prices)
 
     logger.info("\n✅ Run complete — GitHub Actions will now commit updated CSVs to repo")
