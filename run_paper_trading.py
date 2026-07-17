@@ -1,41 +1,39 @@
-# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v6
+# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v7
 # ─────────────────────────────────────────────────────────────────────────────
-# v6 change — portfolio-level risk management (previously: v5, execution
-# reliability). What was found and fixed this round:
+# v7 change — calibrated for an explicitly stated high risk capacity and a
+# preference for high-growth/momentum names, with reinvestment/compounding
+# made explicit. Three things changed:
 #
-#   1. SIZING BUG: position sizing was based on paper_mgr.free_cash instead
-#      of total portfolio equity. Since free_cash shrinks every time capital
-#      moves from cash into an open stock position (even though that capital
-#      hasn't left the portfolio — it's just in a different form), each
-#      successive trade in a run was sized against a progressively smaller,
-#      wrong denominator. Simulated impact: by the 5th trade in a session,
-#      the risk budget was ~90% smaller than the intended 2.5%-of-equity
-#      target. Fixed: sizing now uses total mark-to-market equity (free cash
-#      + deployed capital + unrealised P&L), which is also what makes
-#      realised profit actually compound into larger future bets — this is
-#      the "how money gets re-added to the portfolio for further investment"
-#      mechanism.
+#   1. RISK DIAL RAISED, NOT REMOVED: risk_pct_per_trade (2.5%→4%) and
+#      max_capital_pct (30%→40%) in signal_generator.py, plus
+#      MAX_PORTFOLIO_RISK_PCT (10%→16%), LIVE_MAX_SECTOR_EXPOSURE (3→4), and
+#      LIVE_MAX_DRAWDOWN (30%→35%) here — see the "Risk tolerance" block
+#      below for the full before/after table and reasoning. Every one of
+#      these is still an active cap; none were deleted. The sector/drawdown
+#      overrides live HERE rather than in swing_trading_bot.py on purpose,
+#      so a backtest run doesn't silently inherit a live-only risk setting.
 #
-#   2. NO PORTFOLIO-LEVEL RISK CONTROLS IN LIVE TRADING: SECTOR_MAP,
-#      MAX_SECTOR_EXPOSURE, and a drawdown circuit breaker already existed
-#      in swing_trading_bot.py — but only inside the internal run_backtest()
-#      simulation loop. The live path (this file) never used them, so the
-#      live bot could end up concentrated in one sector, or kept opening
-#      new trades through a large drawdown, with nothing to stop it. Fixed:
-#      both are now wired into live execution (imported, not reimplemented).
+#   2. HIGH-GROWTH/MOMENTUM UNIVERSE ADDED: LARGECAP/MIDCAP skew toward
+#      established, comparatively stable businesses — not where "high risk,
+#      high growth, momentum" exposure actually lives. Added
+#      HIGH_GROWTH_MOMENTUM_UNIVERSE (new-age tech/internet, defence,
+#      renewable energy/EV — themes confirmed live via search, July 2026,
+#      not just historically notable) and gave each theme a proper
+#      SECTOR_MAP grouping in swing_trading_bot.py, so the concentration cap
+#      actually treats correlated theme clusters as one sector instead of
+#      each stock silently counting as its own separate "sector."
 #
-#   3. NO AGGREGATE RISK BUDGET: each trade was sized to risk ~2.5% of
-#      equity in isolation, but nothing capped the SUM of risk across all
-#      simultaneously open positions. 5 uncorrelated 2.5% bets is one thing;
-#      5 correlated bets (e.g. same sector) behave more like one large bet.
-#      Fixed: a portfolio-level risk budget (MAX_PORTFOLIO_RISK_PCT of
-#      equity) now caps total capital-at-stake across the whole book —
-#      new trades get sized down (or skipped) to fit within what's left.
+#   3. COMPOUNDING MADE VISIBLE: the sizing-basis fix in v6 (total equity,
+#      not free_cash) already meant realised + unrealised gains flow into
+#      the next trade's size automatically — that mechanism doesn't need to
+#      change again, it needed to be checked and shown. Added a "Growth
+#      Multiple" line to the summary so reinvestment is a visible, auditable
+#      number every run instead of an implicit side-effect.
 #
-# Carried over from v5 (still true — see CHANGES_step1.md for full detail):
+# Carried over from v6/v5 (still true — see CHANGES_step1.md / step2.md):
 # resilient bulk price fetching, dtype-crash fix for closing trades, health
-# checks + alerting, stale-position safety net, expanded scan universe,
-# position replacement for full slots.
+# checks + alerting, stale-position safety net, position replacement for
+# full slots, aggregate risk budget, sector cap, drawdown circuit breaker.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import logging
@@ -63,23 +61,39 @@ MAX_HOLD_DAYS   = 15
 TRADES_CSV = 'paper_trades.csv'
 EQUITY_CSV = 'daily_equity.csv'
 
-# Portfolio-level risk budget — caps TOTAL capital-at-stake (sum of every
-# open position's entry-to-stop-loss distance) as a % of equity, on top of
-# each individual trade's own 2.5% (RISK_PROFILE in signal_generator.py).
-# Without this, N simultaneously-open trades each risking 2.5% independently
-# could add up to N x 2.5% of correlated exposure with no ceiling at all.
-MAX_PORTFOLIO_RISK_PCT = 0.10   # 10% of total equity, worst case, across the whole book
-
-# MAX_SECTOR_EXPOSURE and MAX_DRAWDOWN_DEFAULT are imported from
-# swing_trading_bot.py rather than redefined here — they already existed
-# there (used only by the internal backtest loop) and are now wired into
-# live trading too, instead of duplicating the same numbers in two places.
+# ── Risk tolerance ───────────────────────────────────────────────────────────
+# Raised across the board to reflect an explicitly stated high risk capacity —
+# willing to size up on high-growth/momentum names for higher upside, in
+# exchange for a wider (but still real) downside band. Nothing here removes
+# a safeguard; every cap is still active, just calibrated looser. If this
+# turns out to be too aggressive (or not aggressive enough) once you've
+# watched it run, these five numbers are the whole risk dial — no code
+# changes needed to retune.
+#
+#                          before  →  now      reasoning
+#   risk_pct_per_trade      2.5%   →  4%       (signal_generator.py) bigger bet per high-conviction idea
+#   max_capital_pct         30%    →  40%      (signal_generator.py) allows more concentrated single-name bets
+#   MAX_PORTFOLIO_RISK_PCT   10%   →  16%      raised in proportion to the per-trade increase
+#   MAX_SECTOR_EXPOSURE       3    →  4        allows heavier weighting into one high-conviction theme
+#   MAX_DRAWDOWN (circuit breaker) 30% → 35%   tolerates a deeper drawdown before pausing new entries
+#
+# MAX_SECTOR_EXPOSURE and MAX_DRAWDOWN are deliberately overridden HERE
+# rather than edited in swing_trading_bot.py — that file's constants are
+# also used by the internal backtester, and there's no reason a backtest
+# calibration run should silently inherit a live-trading-specific risk
+# preference. Live trading and backtesting can reasonably run different
+# risk settings; this keeps them decoupled on purpose.
+MAX_PORTFOLIO_RISK_PCT   = 0.16   # % of total equity, worst case, across the whole book
+LIVE_MAX_SECTOR_EXPOSURE = 4      # overrides swing_trading_bot.MAX_SECTOR_EXPOSURE (3) for live trading
+LIVE_MAX_DRAWDOWN        = 0.35   # overrides swing_trading_bot.MAX_DRAWDOWN_DEFAULT (0.30) for live trading
 
 # Replacement gate — a new signal must clear ALL of these to bump an
 # existing open position out of its slot:
 REPLACE_SCORE_MULTIPLE = 1.40   # new composite score must beat the weakest by 40%+
 PROTECT_PROFIT_PCT     = 0.03   # never replace a position up >3% unrealised
 PROTECT_PROGRESS_PCT   = 0.80   # never replace a position >80% of the way to target
+
+
 
 LARGECAP_UNIVERSE = [
     'RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK',
@@ -109,7 +123,41 @@ MIDCAP_UNIVERSE = [
     'HAPPSTMNDS', 'DIXON', 'AMBER',
 ]
 
-SCAN_UNIVERSE = LARGECAP_UNIVERSE + MIDCAP_UNIVERSE
+# ── High-growth / momentum universe ─────────────────────────────────────────
+# Added to reflect an explicitly stated high risk capacity and preference for
+# high-growth, high-momentum names — the LARGECAP/MIDCAP lists above skew
+# toward established, comparatively stable businesses, which isn't where
+# that kind of exposure lives. These three themes were confirmed live (web
+# search, July 2026) as currently active, not just historically notable:
+#
+#   • New-age tech/internet — high growth, high volatility, sentiment-driven.
+#     Zomato's parent renamed to Eternal Ltd in 2025 and was added to the
+#     Nifty 50; ticker remains ZOMATO on NSE/yfinance.
+#   • Defence — genuinely in a live momentum phase as of mid-2026: multiple
+#     consecutive rally sessions in June/July on record defence production
+#     figures and large DAC procurement approvals (₹52,000cr+ tranches).
+#   • Renewable energy / EV — an active, high-beta theme through 2026 (solar
+#     manufacturing capacity buildout, wind order momentum), though names
+#     here swing both ways day to day, consistent with genuinely higher risk.
+#
+# Same caveat as MIDCAP_UNIVERSE: I don't have live yfinance/NSE access from
+# this sandbox to individually confirm every ticker still resolves — a few
+# were spot-checked via search (ZOMATO, WAAREEENER, ACMESOLAR), the rest are
+# good-faith based on current sourcing. Unresolvable tickers are skipped
+# automatically (existing safe behaviour) — prune anything that never hits.
+HIGH_GROWTH_MOMENTUM_UNIVERSE = [
+    # New-age tech / internet
+    'ZOMATO', 'NYKAA', 'PAYTM', 'POLICYBZR', 'DELHIVERY', 'IRCTC',
+    'NAUKRI', 'INDIAMART', 'CARTRADE', 'MAPMYINDIA', 'EASEMYTRIP', 'NAZARA',
+    # Defence — live momentum theme as of mid-2026, see note above
+    'HAL', 'BEL', 'BDL', 'MAZDOCK', 'COCHINSHIP', 'SOLARINDS',
+    'ASTRAMICRO', 'MTARTECH', 'PARAS', 'ZENTEC', 'DATAPATTNS', 'BEML', 'GRSE',
+    # Renewable energy / EV — high-beta, both-directions theme
+    'SUZLON', 'WAAREEENER', 'ADANIGREEN', 'NTPCGREEN', 'ACMESOLAR',
+    'PREMIERENE', 'JSWENERGY', 'TATAPOWER', 'INOXWIND',
+]
+
+SCAN_UNIVERSE = LARGECAP_UNIVERSE + MIDCAP_UNIVERSE + HIGH_GROWTH_MOMENTUM_UNIVERSE
 
 
 def get_all_held_symbols(trades_csv):
@@ -289,16 +337,16 @@ def run_eod():
                             paper_mgr.get_open_positions_by_sector(SECTOR_MAP).items()}
 
     logger.info(f"  Total equity          : ₹{total_equity:,.2f}  (peak: ₹{peak_equity:,.2f})")
-    logger.info(f"  Drawdown from peak     : {drawdown_pct*100:.1f}%  (circuit breaker at {MAX_DRAWDOWN_DEFAULT*100:.0f}%)")
+    logger.info(f"  Drawdown from peak     : {drawdown_pct*100:.1f}%  (circuit breaker at {LIVE_MAX_DRAWDOWN*100:.0f}%)")
     logger.info(f"  Aggregate open risk    : ₹{current_agg_risk:,.2f}  ({portfolio_risk_pct*100:.1f}% of equity, cap {MAX_PORTFOLIO_RISK_PCT*100:.0f}%)")
-    logger.info(f"  Sector exposure        : {sector_counts or 'none'}  (cap {MAX_SECTOR_EXPOSURE}/sector)")
+    logger.info(f"  Sector exposure        : {sector_counts or 'none'}  (cap {LIVE_MAX_SECTOR_EXPOSURE}/sector)")
 
-    circuit_breaker_active = drawdown_pct >= MAX_DRAWDOWN_DEFAULT
+    circuit_breaker_active = drawdown_pct >= LIVE_MAX_DRAWDOWN
     if circuit_breaker_active:
         logger.warning(
             f"  🛑 DRAWDOWN CIRCUIT BREAKER ACTIVE: equity is down {drawdown_pct*100:.1f}% "
             f"from its peak (₹{peak_equity:,.2f} → ₹{total_equity:,.2f}), ≥ the "
-            f"{MAX_DRAWDOWN_DEFAULT*100:.0f}% halt threshold. Skipping new entries this run "
+            f"{LIVE_MAX_DRAWDOWN*100:.0f}% halt threshold. Skipping new entries this run "
             f"— existing positions still get their normal exit checks."
         )
         alert_notifier.send_alert(
@@ -389,7 +437,7 @@ def run_eod():
                                 f"(₹{risk_budget_left:.0f} left)")
 
                 # ── Sector cap: at limit → only allowed via same-sector swap ──
-                sector_at_cap = sector_counts.get(sector, 0) >= MAX_SECTOR_EXPOSURE
+                sector_at_cap = sector_counts.get(sector, 0) >= LIVE_MAX_SECTOR_EXPOSURE
 
                 if slots_free > 0 and not sector_at_cap:
                     opened = paper_mgr.open_trade(
@@ -410,7 +458,7 @@ def run_eod():
                         sector_counts[sector] = sector_counts.get(sector, 0) + 1
                 else:
                     if sector_at_cap and slots_free > 0:
-                        logger.info(f"    {symbol}: sector '{sector}' at cap ({MAX_SECTOR_EXPOSURE}) "
+                        logger.info(f"    {symbol}: sector '{sector}' at cap ({LIVE_MAX_SECTOR_EXPOSURE}) "
                                     f"— can only swap in via same-sector replacement")
                         skipped_sector += 1
 
@@ -490,6 +538,17 @@ def _print_summary(paper_mgr, latest_prices):
                 f"  ({summary.get('open_trades', 0)} open positions)")
     logger.info(f"  Free Cash             : ₹{summary.get('free_cash',             0):>10,.2f}")
     logger.info(f"  Total Portfolio Value : ₹{summary.get('total_portfolio_value', 0):>10,.2f}")
+
+    # Makes compounding tangible: every rupee of realised + unrealised P&L is
+    # already inside total_portfolio_value, which is what position sizing is
+    # based on (see RISK_PROFILE header note) — so this multiple is a direct
+    # readout of how much bigger your NEXT trade's sizing basis has become as
+    # a result of past gains, not just a vanity stat.
+    initial_eq = summary.get('initial_equity', 0) or INITIAL_EQUITY
+    if initial_eq > 0:
+        growth_multiple = summary.get('total_portfolio_value', 0) / initial_eq
+        logger.info(f"  Growth Multiple       : {growth_multiple:.3f}x initial equity "
+                    f"(this is what your next trade's position size scales off)")
 
     logger.info("\n  ── P&L ──────────────────────────────────────────────────────")
     logger.info(f"  Realised P&L          : ₹{summary.get('realised_pnl',    0):>+10,.2f}"
