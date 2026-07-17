@@ -29,10 +29,18 @@ SECTOR_PE = {
 }
 
 # ── Tunable risk profile ──────────────────────────────────────────────────────
+# risk_pct_per_trade / max_capital_pct raised from 2.5%/30% to 4%/40% to
+# reflect an explicitly stated high risk capacity — willing to size up on
+# high-conviction, high-growth/momentum names rather than spread thin.
+# The portfolio-level backstops in run_paper_trading.py (aggregate risk
+# budget, sector cap, drawdown circuit breaker) are what keep this "bigger
+# bets" setting from turning into "no risk management" — they were raised
+# in proportion, not removed, so a single trade can be bigger, but the
+# whole book still has a ceiling.
 RISK_PROFILE = {
     # position sizing
-    'risk_pct_per_trade':  0.025,   # 2.5% of equity at risk per trade (vs 1.5% conservative)
-    'max_capital_pct':     0.30,    # max 30% of equity in one name
+    'risk_pct_per_trade':  0.04,    # 4% of equity at risk per trade (was 2.5%)
+    'max_capital_pct':     0.40,    # max 40% of equity in one name (was 30%)
 
     # entry filters — lower values = more trades
     'min_bars':            50,      # was 80
