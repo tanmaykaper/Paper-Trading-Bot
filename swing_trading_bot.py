@@ -56,6 +56,28 @@ SECTOR_MAP = {
     'SUNPHARMA':'PHARMA','DRREDDY':'PHARMA','CIPLA':'PHARMA','DIVISLAB':'PHARMA',
     # Realty
     'DLF':'REALTY','GODREJPROP':'REALTY','OBEROIRLTY':'REALTY',
+
+    # New-age tech / internet — added alongside HIGH_GROWTH_MOMENTUM_UNIVERSE
+    # in run_paper_trading.py. Grouping these together matters: they tend to
+    # move together on sentiment/risk-appetite shifts, so without this they'd
+    # each silently count as their own separate "sector" and the concentration
+    # cap would do nothing to prevent a fully correlated cluster of bets.
+    'ZOMATO':'NEWAGE_TECH', 'NYKAA':'NEWAGE_TECH', 'PAYTM':'NEWAGE_TECH',
+    'POLICYBZR':'NEWAGE_TECH', 'DELHIVERY':'NEWAGE_TECH', 'IRCTC':'NEWAGE_TECH',
+    'NAUKRI':'NEWAGE_TECH', 'INDIAMART':'NEWAGE_TECH', 'CARTRADE':'NEWAGE_TECH',
+    'MAPMYINDIA':'NEWAGE_TECH', 'EASEMYTRIP':'NEWAGE_TECH', 'NAZARA':'NEWAGE_TECH',
+
+    # Defence — same reasoning: these move together hard on procurement
+    # news/budget headlines (see run_paper_trading.py header note).
+    'HAL':'DEFENCE', 'BEL':'DEFENCE', 'BDL':'DEFENCE', 'MAZDOCK':'DEFENCE',
+    'COCHINSHIP':'DEFENCE', 'SOLARINDS':'DEFENCE', 'ASTRAMICRO':'DEFENCE',
+    'MTARTECH':'DEFENCE', 'PARAS':'DEFENCE', 'ZENTEC':'DEFENCE',
+    'DATAPATTNS':'DEFENCE', 'BEML':'DEFENCE', 'GRSE':'DEFENCE',
+
+    # Renewable energy / EV
+    'SUZLON':'RENEWABLE_EV', 'WAAREEENER':'RENEWABLE_EV', 'ADANIGREEN':'RENEWABLE_EV',
+    'NTPCGREEN':'RENEWABLE_EV', 'ACMESOLAR':'RENEWABLE_EV', 'PREMIERENE':'RENEWABLE_EV',
+    'JSWENERGY':'RENEWABLE_EV', 'TATAPOWER':'RENEWABLE_EV', 'INOXWIND':'RENEWABLE_EV',
 }
 
 MAX_SECTOR_EXPOSURE     = 3
