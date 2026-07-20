@@ -13,8 +13,9 @@ from datetime import datetime
 from data_fetcher_free import DataFetcherFree
 from technical_indicators import TechnicalIndicators
 from fundamental_screener import FundamentalScreener
-from signal_generator import SignalGenerator
+from signal_generator import SignalGenerator, RISK_PROFILE
 from notification_handler import NotificationHandler
+from alpha_engine import CompositeAlphaScore
 import os
 from dotenv import load_dotenv
 import time
@@ -214,11 +215,52 @@ class SwingTradingBot:
 
     # ── Portfolio backtest ────────────────────────────────────────────────────
 
-    def backtest_portfolio(self, stock_list, days=600):
+    def backtest_portfolio(self, stock_list, days=600, use_alpha_engine=True,
+                            max_portfolio_risk_pct=0.16, min_alpha_score=None,
+                            tier_size_multiplier=None):
+        """
+        use_alpha_engine: when True (default), every technical BUY signal
+            also gets alpha_engine's cross-sectional conviction score —
+            gating weak signals, scaling position size by tier, exactly as
+            in live trading (run_paper_trading.py). When False, runs the
+            pre-alpha-engine policy (signal_generator alone) — this is the
+            A/B baseline: run the SAME stock_list/days with both settings
+            and diff the performance reports to see the alpha engine's
+            actual marginal contribution, rather than trusting a single
+            absolute number.
+
+        max_portfolio_risk_pct: caps total capital-at-stake across all
+            open positions simultaneously, same mechanism as Step 2's live
+            risk budget (run_paper_trading.py's MAX_PORTFOLIO_RISK_PCT).
+            Defaults to 0.16 to match live's current setting — this
+            matters for backtest fidelity: a backtest that doesn't share
+            live's capital-allocation policy isn't actually predicting
+            what live trading will do, just a different, untested policy.
+
+        min_alpha_score / tier_size_multiplier: override the values on
+            CompositeAlphaScore if you want to experiment with different
+            thresholds; default to the same live-production values.
+
+        Point-in-time correctness: every alpha_engine computation below
+        uses only data available UP TO AND INCLUDING bar i — this is a
+        walk-forward simulation, not a vectorized one, specifically so
+        that's straightforward to get right and verify (see
+        test_lookahead_bias in the accompanying test suite, which injects
+        a deliberately unmistakable future price shock and confirms an
+        earlier bar's decisions are completely unaffected by it).
+        """
         logger.info(f"\n{'='*70}")
-        logger.info(f"📊 PORTFOLIO BACKTEST v3 — {len(stock_list)} stocks, {days} days")
-        logger.info(f"Initial Equity: ₹{self.initial_equity:,} | Max trades: {self.max_open_trades}")
+        logger.info(f"📊 PORTFOLIO BACKTEST v4 — {len(stock_list)} stocks, {days} days")
+        logger.info(f"Initial Equity: ₹{self.initial_equity:,} | Max trades: {self.max_open_trades} | "
+                    f"Alpha engine: {'ON' if use_alpha_engine else 'OFF (baseline)'}")
         logger.info(f"{'='*70}\n")
+
+        alpha_scorer = CompositeAlphaScore() if use_alpha_engine else None
+        min_alpha_score = min_alpha_score if min_alpha_score is not None else (
+            alpha_scorer.MIN_ALPHA_SCORE_TO_TRADE if alpha_scorer else 0)
+        tier_mult_map = tier_size_multiplier if tier_size_multiplier is not None else (
+            alpha_scorer.TIER_SIZE_MULTIPLIER if alpha_scorer else {})
+        pattern_weights = {}   # evolves across the run, mirroring cross-run persistence in live
 
         all_dfs = {}
         for i, sym in enumerate(stock_list):
@@ -303,6 +345,9 @@ class SwingTradingBot:
                         'entry_type':    trade['entry_type'],
                         'market_regime': trade['market_regime'],
                         'confidence':    trade.get('confidence', 1),
+                        'alpha_score':   trade.get('alpha_score'),
+                        'alpha_tier':    trade.get('alpha_tier'),
+                        'exit_index':    i,
                     })
                     self.current_equity += net_pnl
                     self.peak_equity     = max(self.peak_equity, self.current_equity)
@@ -318,6 +363,47 @@ class SwingTradingBot:
 
             if len(open_trades) < self.max_open_trades and self.current_equity > 0:
                 sector_counts = self._sector_counts(open_trades)
+
+                # ── Point-in-time cross-sectional alpha prep ────────────────
+                # Everything here uses ONLY data up to and including bar i —
+                # see test_lookahead_bias in the test suite for the explicit
+                # check that this holds (a future price shock injected at a
+                # later bar has zero effect on an earlier bar's scores).
+                regime_result, factor_ranks = {'tilts': {}}, {}
+                if use_alpha_engine:
+                    try:
+                        if nifty_df is not None and i < len(nifty_df):
+                            nifty_window = nifty_df.iloc[:i + 1]
+                            if len(nifty_window) >= 30:
+                                regime_result = alpha_scorer.regime_detector.classify(nifty_window)
+
+                        candidates = {s: all_dfs[s].iloc[:i + 1] for s in all_dfs
+                                      if s not in open_trades and i < len(all_dfs[s])}
+                        if len(candidates) >= 2:
+                            factor_values = {s: alpha_scorer.factor_engine.compute_all(df)
+                                              for s, df in candidates.items()}
+                            factor_ranks = alpha_scorer.ranker.rank_universe(factor_values, sector_map=SECTOR_MAP)
+
+                        # Recalibrate pattern weights from trades CLOSED SO FAR
+                        # ONLY. all_trades is safe to use directly here without
+                        # an extra bar-index filter: exits for bar i are
+                        # processed earlier in THIS SAME iteration (above),
+                        # and every prior iteration already appended its own
+                        # closes before this point ran — so by construction,
+                        # every entry in all_trades at this point in the loop
+                        # closed at or before bar i, never after it.
+                        if all_trades:
+                            pattern_weights = alpha_scorer.calibrator.calibrate_weights(
+                                pd.DataFrame(all_trades), previous_weights=pattern_weights,
+                                pattern_col='entry_type', pnl_col='net_pnl')
+                    except Exception as e:
+                        logger.debug(f"Alpha engine unavailable at bar {i}: {e}")
+                        regime_result, factor_ranks = {'tilts': {}}, {}
+
+                current_agg_risk = sum(
+                    (t['entry_price'] - t['stop_loss']) * t['position_size']
+                    for t in open_trades.values()
+                )
 
                 for sym in all_dfs:
                     if sym in open_trades or i >= len(all_dfs[sym]):
@@ -337,31 +423,79 @@ class SwingTradingBot:
                             market_regime=regime, last_exit_bar=lex
                         )
 
-                        if sig == 'BUY':
-                            capital = det['entry_price'] * det['position_size']
-                            if capital <= self.current_equity * 0.30:
-                                open_trades[sym] = {
-                                    'entry_price':   det['entry_price'],
-                                    'stop_loss':     det['stop_loss'],
-                                    'target':        det['target_price'],
-                                    'position_size': det['position_size'],
-                                    'entry_date':    all_dfs[sym].iloc[i]['datetime'],
-                                    'entry_index':   i,
-                                    'entry_type':    det['entry_type'],
-                                    'market_regime': regime,
-                                    'confidence':    det.get('confidence', 1),
-                                }
-                                sector_counts[sym_sector] = sector_counts.get(sym_sector, 0) + 1
-                                if len(open_trades) >= self.max_open_trades:
-                                    break
+                        if sig != 'BUY':
+                            continue
+
+                        alpha_score, alpha_tier = None, None
+                        if use_alpha_engine:
+                            pattern_weight = pattern_weights.get(det['entry_type'], 1.0)
+                            alpha_result = alpha_scorer.score_symbol(
+                                sym, factor_ranks.get(sym, {}), regime_result, pattern_weight=pattern_weight,
+                            )
+                            if alpha_result['composite_score'] is None or alpha_result['composite_score'] < min_alpha_score:
+                                continue
+                            alpha_score, alpha_tier = alpha_result['composite_score'], alpha_result['tier']
+                            tier_mult = tier_mult_map.get(alpha_tier, 1.0)
+                            if tier_mult != 1.0:
+                                det['position_size'] = max(1, int(det['position_size'] * tier_mult))
+
+                        # Portfolio risk budget — same mechanism as live
+                        # (run_paper_trading.py Step 6), applied AFTER any
+                        # tier-based resize above, so it remains the hard
+                        # final constraint regardless of conviction tier.
+                        risk_per_share = det['entry_price'] - det['stop_loss']
+                        risk_budget_left = max_portfolio_risk_pct * self.current_equity - current_agg_risk
+                        if risk_budget_left <= 0:
+                            continue
+                        trade_risk = det['position_size'] * risk_per_share
+                        if trade_risk > risk_budget_left:
+                            shrunk = max(0, int(risk_budget_left / risk_per_share)) if risk_per_share > 0 else 0
+                            if shrunk < 1:
+                                continue
+                            det['position_size'] = shrunk
+
+                        capital = det['entry_price'] * det['position_size']
+                        # RISK_PROFILE['max_capital_pct'] referenced directly
+                        # rather than a separately hardcoded number here —
+                        # signal_generator.py already sizes to this cap
+                        # internally; this is a basic affordability sanity
+                        # check on top, not a second independent policy that
+                        # could silently drift out of sync with it again (an
+                        # older version of this check used a stale 0.30
+                        # while signal_generator had already moved to 0.40).
+                        if capital <= self.current_equity * RISK_PROFILE['max_capital_pct']:
+                            open_trades[sym] = {
+                                'entry_price':   det['entry_price'],
+                                'stop_loss':     det['stop_loss'],
+                                'target':        det['target_price'],
+                                'position_size': det['position_size'],
+                                'entry_date':    all_dfs[sym].iloc[i]['datetime'],
+                                'entry_index':   i,
+                                'entry_type':    det['entry_type'],
+                                'market_regime': regime,
+                                'confidence':    det.get('confidence', 1),
+                                'alpha_score':   alpha_score,
+                                'alpha_tier':    alpha_tier,
+                            }
+                            sector_counts[sym_sector] = sector_counts.get(sym_sector, 0) + 1
+                            current_agg_risk += (det['entry_price'] - det['stop_loss']) * det['position_size']
+                            if len(open_trades) >= self.max_open_trades:
+                                break
                     except Exception as e:
                         logger.debug(f"Signal error {sym}: {e}")
 
             equity_curve.append({'bar': i, 'equity': self.current_equity})
 
+        # Stored as an instance attribute rather than added to the return
+        # value — backtest_portfolio() has always returned just trades_df,
+        # and existing callers (run_backtest.py, any ad-hoc scripts) may
+        # already rely on that. Anyone who wants the equity curve too reads
+        # bot.last_equity_curve right after calling backtest_portfolio().
+        self.last_equity_curve = pd.DataFrame(equity_curve) if equity_curve else pd.DataFrame(columns=['bar', 'equity'])
+
         if all_trades:
             trades_df = pd.DataFrame(all_trades)
-            eq_df     = pd.DataFrame(equity_curve)
+            eq_df     = self.last_equity_curve
             self._print_summary(trades_df, eq_df)
             return trades_df
         else:
