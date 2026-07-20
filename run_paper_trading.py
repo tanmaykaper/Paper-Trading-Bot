@@ -1,39 +1,47 @@
-# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v7
+# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v8
 # ─────────────────────────────────────────────────────────────────────────────
-# v7 change — calibrated for an explicitly stated high risk capacity and a
-# preference for high-growth/momentum names, with reinvestment/compounding
-# made explicit. Three things changed:
+# v8 change — alpha_engine.py (built and independently tested against
+# synthetic data in a prior step — see ALPHA_ENGINE_DESIGN.md) is now wired
+# in as a conviction-scoring layer ON TOP OF signal_generator.py, not in
+# place of it:
 #
-#   1. RISK DIAL RAISED, NOT REMOVED: risk_pct_per_trade (2.5%→4%) and
-#      max_capital_pct (30%→40%) in signal_generator.py, plus
-#      MAX_PORTFOLIO_RISK_PCT (10%→16%), LIVE_MAX_SECTOR_EXPOSURE (3→4), and
-#      LIVE_MAX_DRAWDOWN (30%→35%) here — see the "Risk tolerance" block
-#      below for the full before/after table and reasoning. Every one of
-#      these is still an active cap; none were deleted. The sector/drawdown
-#      overrides live HERE rather than in swing_trading_bot.py on purpose,
-#      so a backtest run doesn't silently inherit a live-only risk setting.
+#   WHAT DIDN'T CHANGE: signal_generator.py still owns entry-pattern
+#   detection and the exact entry/stop-loss/target price levels for every
+#   trade — that logic, and its own simple BULL/NEUTRAL/BEAR regime input,
+#   are untouched. alpha_engine has no opinion on price levels; it only
+#   scores conviction in a signal signal_generator has already produced.
 #
-#   2. HIGH-GROWTH/MOMENTUM UNIVERSE ADDED: LARGECAP/MIDCAP skew toward
-#      established, comparatively stable businesses — not where "high risk,
-#      high growth, momentum" exposure actually lives. Added
-#      HIGH_GROWTH_MOMENTUM_UNIVERSE (new-age tech/internet, defence,
-#      renewable energy/EV — themes confirmed live via search, July 2026,
-#      not just historically notable) and gave each theme a proper
-#      SECTOR_MAP grouping in swing_trading_bot.py, so the concentration cap
-#      actually treats correlated theme clusters as one sector instead of
-#      each stock silently counting as its own separate "sector."
+#   WHAT'S NEW: every technical BUY signal now also gets a 0-100
+#   cross-sectional conviction score — ranked against the rest of today's
+#   scan universe, adjusted for a richer 5-state market regime (not just
+#   BULL/BEAR), and weighted by this bot's own realized track record per
+#   entry pattern (persisted across runs in pattern_weights.csv). That
+#   score now:
+#     1. GATES entries — a technical signal below MIN_ALPHA_SCORE_TO_TRADE
+#        (Tier 3/"Marginal") doesn't get taken, even if signal_generator
+#        liked it.
+#     2. SIZES entries — TIER_SIZE_MULTIPLIER scales position size by
+#        conviction tier, layered BEFORE the existing portfolio risk-budget
+#        check (Step 2's hard cap), so higher conviction means a bigger bet
+#        within the same risk limits, not outside them.
+#     3. RANKS entries — replaces the old confidence×risk_reward_ratio
+#        heuristic in position-replacement decisions (Step 1) with the
+#        richer alpha score, recorded per-trade so existing positions can
+#        be fairly re-evaluated later, not just new candidates.
 #
-#   3. COMPOUNDING MADE VISIBLE: the sizing-basis fix in v6 (total equity,
-#      not free_cash) already meant realised + unrealised gains flow into
-#      the next trade's size automatically — that mechanism doesn't need to
-#      change again, it needed to be checked and shown. Added a "Growth
-#      Multiple" line to the summary so reinvestment is a visible, auditable
-#      number every run instead of an implicit side-effect.
+#   RELIABILITY: the whole alpha-scoring step is wrapped in try/except — if
+#   it fails for any reason (e.g. no Nifty data this run), trading falls
+#   back to exactly the pre-integration behaviour (signal_generator's
+#   BUY/HOLD alone, no gating) rather than stopping entirely. The universe
+#   data fetch that both signal_generator AND the alpha engine need is
+#   deliberately OUTSIDE that try/except, so a failure in the new layer
+#   can never silently stop the old one from working — see Step 5.
 #
-# Carried over from v6/v5 (still true — see CHANGES_step1.md / step2.md):
-# resilient bulk price fetching, dtype-crash fix for closing trades, health
-# checks + alerting, stale-position safety net, position replacement for
-# full slots, aggregate risk budget, sector cap, drawdown circuit breaker.
+# Carried over from v7/v6/v5 (still true — see CHANGES_step1/2.md,
+# ALPHA_ENGINE_DESIGN.md): resilient bulk price fetching, dtype-crash fix,
+# health checks + alerting, stale-position safety net, position replacement,
+# aggregate risk budget, sector cap, drawdown circuit breaker, raised risk
+# tolerance, high-growth/momentum universe, visible compounding.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import logging
@@ -45,6 +53,8 @@ from datetime import datetime
 from swing_trading_bot import SwingTradingBot, SECTOR_MAP, MAX_SECTOR_EXPOSURE, MAX_DRAWDOWN_DEFAULT
 from paper_trading_manager import PaperTradingManager
 from notification_handler import NotificationHandler
+from alpha_engine import CompositeAlphaScore
+from signal_generator import SignalGenerator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,6 +102,34 @@ LIVE_MAX_DRAWDOWN        = 0.35   # overrides swing_trading_bot.MAX_DRAWDOWN_DEF
 REPLACE_SCORE_MULTIPLE = 1.40   # new composite score must beat the weakest by 40%+
 PROTECT_PROFIT_PCT     = 0.03   # never replace a position up >3% unrealised
 PROTECT_PROGRESS_PCT   = 0.80   # never replace a position >80% of the way to target
+
+# ── Alpha engine integration ────────────────────────────────────────────────
+# alpha_engine.py (built and independently tested against synthetic data
+# with known-correct answers — see ALPHA_ENGINE_DESIGN.md) sits ON TOP of
+# signal_generator.py, not in place of it. signal_generator.py still owns
+# entry-pattern detection and the exact entry/stop/target price levels —
+# that logic is unchanged. What alpha_engine adds: a cross-sectional
+# conviction score (0-100) for every BUY candidate, ranked against the
+# CURRENT scan universe and adjusted for the current market regime and this
+# bot's own realized track record per entry pattern. That score now decides
+# (a) whether a technically-valid signal is actually worth taking, (b) how
+# large a bet it gets within the existing risk-budget system, and (c) which
+# position wins when two signals compete for a limited slot — replacing the
+# old crude confidence×risk_reward_ratio heuristic used for all three.
+PATTERN_WEIGHTS_CSV     = 'pattern_weights.csv'
+MIN_ALPHA_SCORE_TO_TRADE = 40   # must clear Tier 3 ("Marginal") — Tier 4 is the engine's own "pass" signal
+
+# Position size multiplier by conviction tier, applied BEFORE the existing
+# portfolio risk-budget check (Step 6) — which remains the hard final
+# constraint, unchanged from Step 2. This is what makes conviction actually
+# affect bet size, not just gating: a Tier 1 setup gets sized up, a Tier 3
+# setup gets sized down, within the same risk limits either way.
+TIER_SIZE_MULTIPLIER = {
+    'Tier 1 — High Conviction':      1.25,
+    'Tier 2 — Moderate Conviction':  1.00,
+    'Tier 3 — Marginal':             0.65,
+    'Tier 4 — Low Conviction / Pass': 0.0,   # shouldn't reach here given MIN_ALPHA_SCORE_TO_TRADE, safe default anyway
+}
 
 
 
@@ -172,18 +210,54 @@ def get_all_held_symbols(trades_csv):
         return set()
 
 
-def _composite_score(details):
-    """Score a candidate BUY signal for replacement comparisons."""
+# Neutral placeholder for a position with no alpha_score on record, used
+# ONLY when alpha scoring is otherwise active this run (i.e. the new
+# candidate being compared against DOES have a real 0-100 alpha_score).
+# Deliberately sits right at the Tier 2/Tier 3 boundary ("assume roughly
+# average until shown otherwise") rather than trying to convert
+# confidence×risk_reward_ratio onto a 0-100 scale — that conversion has no
+# principled basis (the two metrics aren't measuring the same thing), and
+# this only matters for a short, self-resolving transition window: every
+# position open when the alpha engine was integrated fully cycles out
+# within MAX_HOLD_DAYS regardless, after which every trade has a real score.
+NEUTRAL_ALPHA_PLACEHOLDER = 55.0
+
+
+def _composite_score(details, alpha_active=True):
+    """
+    Score a candidate BUY signal for replacement comparisons.
+
+    alpha_active: whether alpha_engine scoring succeeded THIS RUN (see the
+    try/except around it in run_eod). This must be threaded through rather
+    than inferred per-candidate, so that every comparison in a given run
+    uses ONE consistent scale — mixing a 0-100 alpha_score against a raw
+    confidence×risk_reward_ratio value (typically ~1.5-45) would make new
+    candidates look systematically stronger than old ones purely from
+    scale, not genuine quality.
+    """
+    if alpha_active and details.get('alpha_score') is not None:
+        return float(details['alpha_score'])
     return float(details.get('confidence', 1)) * float(details.get('risk_reward_ratio', 1.0))
 
 
-def _existing_position_score(trade):
+def _existing_position_score(trade, alpha_active=True):
     """
-    Approximate the same composite score for an already-open position,
-    using the confidence/risk_reward_ratio recorded at entry time. Trades
-    opened before this field existed fall back to a neutral estimate so
-    they aren't unfairly favoured or penalised by missing data.
+    Same idea for an already-open position, read back from the CSV.
+
+    If alpha scoring is active this run: prefer the trade's own recorded
+    alpha_score; a legacy trade with none gets NEUTRAL_ALPHA_PLACEHOLDER
+    (comparable 0-100 scale) rather than a confidence×risk_reward_ratio
+    number that isn't on the same scale as what it's being compared to.
+
+    If alpha scoring is NOT active this run (engine failed, see run_eod):
+    every candidate falls back to confidence×risk_reward_ratio uniformly,
+    including this one — consistent scale maintained either way.
     """
+    alpha = trade.get('alpha_score')
+    if alpha_active:
+        if pd.notna(alpha) and alpha != '':
+            return float(alpha)
+        return NEUTRAL_ALPHA_PLACEHOLDER
     conf = trade.get('confidence')
     rr   = trade.get('risk_reward_ratio')
     conf = float(conf) if pd.notna(conf) and conf != '' else 3.0   # neutral mid-range
@@ -211,7 +285,7 @@ def get_peak_equity(equity_csv_path, floor):
         return floor
 
 
-def find_replaceable_position(open_trades, new_details, latest_prices, sector_filter=None):
+def find_replaceable_position(open_trades, new_details, latest_prices, sector_filter=None, alpha_active=True):
     """
     Return the weakest open trade eligible for replacement by new_details,
     or None if nothing qualifies. ALL of these must hold:
@@ -222,8 +296,11 @@ def find_replaceable_position(open_trades, new_details, latest_prices, sector_fi
          (used when the new signal's own sector is already at its exposure cap —
          it may only swap in by replacing a position in the SAME sector, so the
          swap is sector-neutral rather than adding new concentration)
+
+    alpha_active: passed straight through to the scoring functions so every
+    comparison in this call uses one consistent scale (see _composite_score).
     """
-    new_score = _composite_score(new_details)
+    new_score = _composite_score(new_details, alpha_active=alpha_active)
     candidates = []
 
     for t in open_trades:
@@ -243,7 +320,7 @@ def find_replaceable_position(open_trades, new_details, latest_prices, sector_fi
         if progress >= PROTECT_PROGRESS_PCT:
             continue
 
-        candidates.append((t, _existing_position_score(t)))
+        candidates.append((t, _existing_position_score(t, alpha_active=alpha_active)))
 
     if not candidates:
         return None
@@ -359,24 +436,96 @@ def run_eod():
             ),
         )
 
-    # ── Step 5: Market regime ─────────────────────────────────────────────────
-    logger.info("\n[Step 5] Checking Nifty 50 market regime...")
-    regime = bot._get_market_regime(days=300)
-    logger.info(f"  Regime: {regime}")
+    # ── Step 5: Market regime + cross-sectional alpha engine prep ─────────────
+    # Fetches Nifty ONCE and derives two independent regime reads from the
+    # same data: the existing simple BULL/NEUTRAL/BEAR classifier (unchanged
+    # — still what signal_generator.py's own pattern logic uses internally,
+    # not touched by this integration) AND alpha_engine's richer 5-state
+    # regime (STRONG_UPTREND/CHOPPY_RANGE/HIGH_VOL_STRESS/etc), used only for
+    # the new cross-sectional scoring layer below. Two classifiers, two
+    # different jobs — not redundant, and deliberately not consolidated into
+    # one, to avoid risking already-tested signal_generator behaviour for
+    # the sake of this integration.
+    logger.info("\n[Step 5] Checking market regime + preparing cross-sectional alpha scoring...")
 
-    # ── Step 6: Scan for new signals (risk-budgeted, sector-capped, with
-    #            position replacement) ────────────────────────────────────────
+    alpha_scorer  = CompositeAlphaScore()
+    alpha_active  = False        # flips True only if every alpha-specific step below succeeds
+    factor_ranks  = {}
+    pattern_weights = {}
+    regime_result = {'regime': 'WEAK_TREND', 'tilts': {}, 'confidence': 0.0}   # neutral default
+
+    nifty_df = bot.fetcher.get_historical_data('^NSEI', days=300, min_bars=200)
+    regime   = SignalGenerator.classify_market_regime(nifty_df)   # unchanged, feeds signal_generator as before
+    logger.info(f"  Regime (simple, drives entry patterns) : {regime}")
+
+    # Bulk-fetch the unheld scan universe ONCE into a dict — this REPLACES
+    # the old per-symbol fetch that used to happen inside the loop below, it
+    # doesn't add new fetches (every one of these symbols was already being
+    # fetched one at a time regardless of whether it ended up a BUY or
+    # HOLD). This fetch is UNCONDITIONAL, deliberately outside the alpha
+    # try/except below — signal_generator needs this data regardless of
+    # whether the alpha scoring layer on top of it succeeds. If the alpha
+    # engine fails, trading should fall back to "no conviction layer", not
+    # silently stop scanning entirely.
+    universe_dfs = {}
+    logger.info(f"  Bulk-fetching history for {len(SCAN_UNIVERSE) - len(held_symbols)} unheld symbols...")
+    for symbol in SCAN_UNIVERSE:
+        if symbol in held_symbols:
+            continue
+        df = bot.fetcher.get_historical_data(symbol, days=200, min_bars=50)
+        if df is not None:
+            universe_dfs[symbol] = df
+    logger.info(f"  Got usable history for {len(universe_dfs)}/{len(SCAN_UNIVERSE) - len(held_symbols)} symbols")
+
+    try:
+        if nifty_df is None:
+            raise ValueError("no Nifty data — cannot run regime-aware alpha scoring this run")
+        if len(universe_dfs) < 2:
+            raise ValueError(f"only {len(universe_dfs)} symbols have usable data — too few to rank cross-sectionally")
+
+        regime_result = alpha_scorer.regime_detector.classify(nifty_df)
+        logger.info(f"  Regime (rich, drives alpha weighting)  : {regime_result['regime']} "
+                    f"(confidence {regime_result['confidence']})")
+
+        factor_values = {s: alpha_scorer.factor_engine.compute_all(df) for s, df in universe_dfs.items()}
+        factor_ranks  = alpha_scorer.ranker.rank_universe(factor_values, sector_map=SECTOR_MAP)
+
+        closed_trades    = paper_mgr.get_closed_trades()
+        previous_weights = alpha_scorer.calibrator.load_weights(PATTERN_WEIGHTS_CSV)
+        if len(closed_trades) > 0:
+            pattern_weights = alpha_scorer.calibrator.calibrate_weights(closed_trades, previous_weights=previous_weights)
+            if pattern_weights:
+                alpha_scorer.calibrator.save_weights(PATTERN_WEIGHTS_CSV, pattern_weights)
+                logger.info(f"  Pattern weights recalibrated from {len(closed_trades)} closed trades: {pattern_weights}")
+        else:
+            pattern_weights = previous_weights
+            logger.info("  No closed trades yet — pattern weights stay at their last calibrated values (or neutral)")
+
+        alpha_active = True
+
+    except Exception as e:
+        logger.error(
+            f"  ⚠️ Alpha engine scoring unavailable this run ({e}) — falling back to "
+            f"signal_generator's own BUY/HOLD decisions with no alpha gating, same as "
+            f"before this integration. Trading continues normally on the {len(universe_dfs)} "
+            f"symbols already fetched above; only the extra conviction layer is skipped."
+        )
+
+    # ── Step 6: Scan for new signals (alpha-scored, risk-budgeted,
+    #            sector-capped, with position replacement) ───────────────────
     open_trades = paper_mgr.get_open_trades()
     open_count  = len(open_trades)
     slots_free  = MAX_OPEN_TRADES - open_count
 
     logger.info(f"\n[Step 6] Scanning {len(SCAN_UNIVERSE)} symbols for new signals...")
-    logger.info(f"  Open: {open_count}/{MAX_OPEN_TRADES} | Slots free: {slots_free} | Free cash: ₹{paper_mgr.free_cash:,.2f}")
+    logger.info(f"  Open: {open_count}/{MAX_OPEN_TRADES} | Slots free: {slots_free} | Free cash: ₹{paper_mgr.free_cash:,.2f}"
+                f" | Alpha scoring: {'ACTIVE' if alpha_active else 'inactive (fallback mode)'}")
 
     new_trades    = 0
     replacements  = 0
     skipped_risk  = 0
     skipped_sector = 0
+    skipped_alpha  = 0
     signals_found = []
 
     if circuit_breaker_active:
@@ -384,14 +533,8 @@ def run_eod():
     elif paper_mgr.free_cash < 500:
         logger.info(f"  Free cash ₹{paper_mgr.free_cash:.0f} too low — skipping scan")
     else:
-        for symbol in SCAN_UNIVERSE:
-            if symbol in held_symbols:
-                continue
+        for symbol, df in universe_dfs.items():
             try:
-                df = bot.fetcher.get_historical_data(symbol, days=200, min_bars=50)
-                if df is None:
-                    continue
-
                 fund = bot.get_fundamentals_safe(symbol)
                 sig, details = bot.signal_gen.generate_signal(
                     df, symbol, fund,
@@ -409,6 +552,43 @@ def run_eod():
                 details['risk'] = round(details.get('position_size', 0) * risk_per_share, 2)
                 details.setdefault('reward', round(
                     details.get('position_size', 0) * (details['target_price'] - details['entry_price']), 2))
+
+                # ── Alpha engine conviction scoring (only if it's active this
+                #    run — see Step 5). Gates whether a technically-valid
+                #    signal is actually worth taking, and scales its size by
+                #    conviction tier. If alpha scoring isn't active, every
+                #    technical BUY signal proceeds exactly as it did before
+                #    this integration — no new restriction gets silently
+                #    added by a degraded run.
+                if alpha_active:
+                    pattern_weight = pattern_weights.get(details['entry_type'], 1.0)
+                    alpha_result = alpha_scorer.score_symbol(
+                        symbol, factor_ranks.get(symbol, {}), regime_result, pattern_weight=pattern_weight,
+                    )
+                    if alpha_result['composite_score'] is None:
+                        if skipped_alpha < 3:
+                            logger.info(f"    {symbol}: technical BUY but no alpha score "
+                                        f"(insufficient factor history) — skipped")
+                        skipped_alpha += 1
+                        continue
+                    if alpha_result['composite_score'] < MIN_ALPHA_SCORE_TO_TRADE:
+                        if skipped_alpha < 3:
+                            logger.info(f"    {symbol}: technical BUY but alpha score "
+                                        f"{alpha_result['composite_score']} is below the {MIN_ALPHA_SCORE_TO_TRADE} "
+                                        f"minimum ({alpha_result['tier']}) — skipped")
+                        elif skipped_alpha == 3:
+                            logger.info("    ... further alpha-gate skips suppressed (see summary count below)")
+                        skipped_alpha += 1
+                        continue
+
+                    details['alpha_score'] = alpha_result['composite_score']
+                    details['alpha_tier']  = alpha_result['tier']
+
+                    tier_mult = TIER_SIZE_MULTIPLIER.get(alpha_result['tier'], 1.0)
+                    if tier_mult != 1.0:
+                        details['position_size'] = max(1, int(details['position_size'] * tier_mult))
+                        details['risk']   = round(details['position_size'] * risk_per_share, 2)
+                        details['reward'] = round(details['position_size'] * (details['target_price'] - details['entry_price']), 2)
 
                 signals_found.append((symbol, details))
                 sector = SECTOR_MAP.get(symbol, symbol)
@@ -449,6 +629,8 @@ def run_eod():
                         entry_type=details['entry_type'],
                         confidence=details.get('confidence'),
                         risk_reward_ratio=details.get('risk_reward_ratio'),
+                        alpha_score=details.get('alpha_score'),
+                        alpha_tier=details.get('alpha_tier'),
                     )
                     if opened:
                         new_trades  += 1
@@ -469,6 +651,7 @@ def run_eod():
                     weak = find_replaceable_position(
                         paper_mgr.get_open_trades(), details, latest_prices,
                         sector_filter=sector if sector_at_cap else None,
+                        alpha_active=alpha_active,
                     )
                     if weak is not None:
                         exit_price = float(latest_prices.get(weak['symbol'], weak['entry_price']))
@@ -486,6 +669,8 @@ def run_eod():
                                 entry_type=details['entry_type'],
                                 confidence=details.get('confidence'),
                                 risk_reward_ratio=details.get('risk_reward_ratio'),
+                                alpha_score=details.get('alpha_score'),
+                                alpha_tier=details.get('alpha_tier'),
                             )
                             if opened:
                                 new_trades   += 1
@@ -502,18 +687,21 @@ def run_eod():
                 logger.error(f"  Error on {symbol}: {e}")
 
     if signals_found:
-        logger.info(f"\n  BUY signals found ({len(signals_found)}):")
+        label = "BUY signals (passed alpha gate)" if alpha_active else "BUY signals (alpha scoring inactive this run)"
+        logger.info(f"\n  {label} ({len(signals_found)}):")
         for sym, det in signals_found:
+            alpha_note = f" | alpha={det['alpha_score']} ({det['alpha_tier']})" if det.get('alpha_score') is not None else ""
             logger.info(
                 f"    🎯 {sym} | {det['entry_type']} | "
                 f"Entry ₹{det['entry_price']:.2f} | SL ₹{det['stop_loss']:.2f} | "
                 f"Target ₹{det['target_price']:.2f} | R:R 1:{det['risk_reward_ratio']:.1f} | "
-                f"conf={det.get('confidence')}"
+                f"conf={det.get('confidence')}{alpha_note}"
             )
     else:
         logger.info("  No new BUY signals today")
     logger.info(f"  New trades opened: {new_trades}  (replacements: {replacements}, "
-                f"skipped on risk budget: {skipped_risk}, skipped on sector cap: {skipped_sector})")
+                f"skipped on alpha gate: {skipped_alpha}, skipped on risk budget: {skipped_risk}, "
+                f"skipped on sector cap: {skipped_sector})")
 
     # ── Step 7: Equity snapshot ───────────────────────────────────────────────
     logger.info("\n[Step 7] Logging equity snapshot...")
