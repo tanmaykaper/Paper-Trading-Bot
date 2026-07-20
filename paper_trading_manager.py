@@ -79,7 +79,7 @@ class PaperTradingManager:
                 'stop_loss', 'target_price', 'position_size', 'status',
                 'exit_date', 'exit_price', 'exit_reason',
                 'gross_pnl', 'commission', 'net_pnl', 'hold_days', 'entry_type',
-                'confidence', 'risk_reward_ratio',
+                'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier',
             ]).to_csv(self.csv_path, index=False)
             logger.info(f"✓ Created {self.csv_path}")
 
@@ -124,7 +124,7 @@ class PaperTradingManager:
 
         for col in ['exit_date', 'exit_price', 'exit_reason',
                     'gross_pnl', 'commission', 'net_pnl', 'hold_days',
-                    'confidence', 'risk_reward_ratio']:
+                    'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier']:
             if col not in df.columns:
                 df[col] = np.nan
 
@@ -138,7 +138,7 @@ class PaperTradingManager:
         # ago never closed even when prices were fetched successfully.
         # Forcing these to 'object' dtype makes string assignment always safe,
         # regardless of pandas version or how many rows are currently empty.
-        for col in ['exit_date', 'exit_reason', 'status', 'symbol', 'side', 'entry_type']:
+        for col in ['exit_date', 'exit_reason', 'status', 'symbol', 'side', 'entry_type', 'alpha_tier']:
             if col in df.columns:
                 df[col] = df[col].astype(object)
 
@@ -228,7 +228,8 @@ class PaperTradingManager:
         return f"{symbol}_{datetime.now().strftime('%Y%m%d')}_{self.trade_counter}"
 
     def open_trade(self, symbol, entry_price, stop_loss, target_price,
-                   position_size, entry_type, confidence=None, risk_reward_ratio=None):
+                   position_size, entry_type, confidence=None, risk_reward_ratio=None,
+                   alpha_score=None, alpha_tier=None):
         """
         Open a new paper trade with capital and slot checks.
         Automatically reduces position size to fit available free cash.
@@ -237,6 +238,14 @@ class PaperTradingManager:
         that generated this trade, so open positions can later be scored
         fairly against new candidate signals (used by position-replacement
         logic in the runner) instead of guessing at their quality.
+
+        alpha_score / alpha_tier (optional): recorded from alpha_engine's
+        CompositeAlphaScore for this specific entry, if the runner has that
+        layer wired in. When present, this is what replacement scoring
+        actually uses (see run_paper_trading.py's _composite_score) —
+        confidence/risk_reward_ratio remain as the fallback for trades
+        opened before the alpha engine was integrated, or on any run where
+        alpha scoring itself couldn't run (e.g. insufficient index data).
         """
         try:
             df          = self._load_csv()
@@ -284,6 +293,8 @@ class PaperTradingManager:
                 'entry_type':    entry_type,
                 'confidence':        confidence if confidence is not None else '',
                 'risk_reward_ratio': round(risk_reward_ratio, 2) if risk_reward_ratio is not None else '',
+                'alpha_score':       round(alpha_score, 1) if alpha_score is not None else '',
+                'alpha_tier':        alpha_tier if alpha_tier is not None else '',
             }])
 
             df = pd.concat([df, new_trade], ignore_index=True)
@@ -629,6 +640,19 @@ class PaperTradingManager:
     def get_open_trades(self):
         df = self._load_csv()
         return df[df['status'] == 'OPEN'].to_dict('records')
+
+    def get_closed_trades(self):
+        """
+        Returns CLOSED trades as a DataFrame (not records) with net_pnl
+        coerced numeric — the shape alpha_engine.AdaptiveWeightCalibrator
+        expects. Separate from get_open_trades()'s dict-records return
+        because the calibrator does pandas groupby/aggregation over this,
+        not per-row iteration.
+        """
+        df = self._load_csv()
+        closed = df[df['status'] == 'CLOSED'].copy()
+        closed['net_pnl'] = pd.to_numeric(closed['net_pnl'], errors='coerce')
+        return closed
 
     # ── Maintenance ───────────────────────────────────────────────────────────
 
