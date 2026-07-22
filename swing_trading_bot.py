@@ -16,6 +16,7 @@ from fundamental_screener import FundamentalScreener
 from signal_generator import SignalGenerator, RISK_PROFILE
 from notification_handler import NotificationHandler
 from alpha_engine import CompositeAlphaScore
+from trailing_stop import compute_trailing_stop
 import os
 from dotenv import load_dotenv
 import time
@@ -164,17 +165,26 @@ class SwingTradingBot:
         return counts
 
     def _apply_trailing_stop(self, trade):
-        ep   = trade['entry_price']
-        sl   = trade['stop_loss']
-        risk = ep - sl
-        curr = trade.get('_curr_price', ep)
+        """
+        Thin wrapper around trailing_stop.compute_trailing_stop() — the
+        SAME function paper_trading_manager.py uses for live trading, so
+        backtest and live run identical trailing-stop economics.
 
-        for trigger_r, trail_r in [(3, 2), (2, 1), (1, 0)]:
-            if curr >= ep + trigger_r * risk:
-                new_sl = ep + trail_r * risk
-                if new_sl > trade['stop_loss']:
-                    trade['stop_loss'] = round(new_sl, 2)
-                break
+        Requires trade['initial_stop_loss'] to be set at trade-open time
+        (immutable — the true 1R reference point). Without it, this used to
+        recompute risk from entry_price - CURRENT stop_loss, which is wrong
+        after the first ratchet (it can even go negative once the stop has
+        passed entry_price) — traced through a concrete case where a
+        position correctly ratcheted to its 2R tier, then incorrectly
+        failed to progress to the 3R tier on a later bar despite reaching
+        the original 3R price level, because "risk" was being measured from
+        the wrong, already-moved reference point.
+        """
+        initial_sl = trade.get('initial_stop_loss', trade['stop_loss'])
+        new_sl = compute_trailing_stop(
+            trade['entry_price'], initial_sl, trade['stop_loss'], trade.get('_curr_price', trade['entry_price'])
+        )
+        trade['stop_loss'] = new_sl
         return trade
 
     # ── Live screening ────────────────────────────────────────────────────────
@@ -467,6 +477,7 @@ class SwingTradingBot:
                             open_trades[sym] = {
                                 'entry_price':   det['entry_price'],
                                 'stop_loss':     det['stop_loss'],
+                                'initial_stop_loss': det['stop_loss'],   # immutable — see trailing_stop.py
                                 'target':        det['target_price'],
                                 'position_size': det['position_size'],
                                 'entry_date':    all_dfs[sym].iloc[i]['datetime'],
