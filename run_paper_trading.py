@@ -1,5 +1,31 @@
-# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v8
+# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v9
 # ─────────────────────────────────────────────────────────────────────────────
+# v9 change — trailing stops, ported from the backtest engine to live
+# trading for the first time (trailing_stop.py, new shared module). Every
+# open position's stop-loss now ratchets up as price moves favorably —
+# breakeven at 1R profit, entry+1R locked in at 2R, entry+2R locked in at
+# 3R — instead of sitting at its original fixed level for the whole trade.
+# Applied in Step 2, before exit checks, so a position that closes today
+# closes against its current (possibly just-ratcheted) stop, not a stale one.
+#
+# This existed in swing_trading_bot.py's backtest already
+# (_apply_trailing_stop) but had never been connected to live trading — the
+# same "built for backtest, missing in live" gap already found and fixed
+# for sector caps and the drawdown circuit breaker earlier in this project.
+# It also had a real bug, caught while porting it rather than carried
+# forward: it recomputed "risk" from entry_price minus the CURRENT
+# stop-loss on every call, which is only correct before the first ratchet —
+# after that, entry_price minus stop_loss no longer equals the original 1R
+# distance the tiers are defined in terms of. Traced through a concrete
+# case: a position correctly ratcheted to its 2R tier, then — despite
+# reaching the genuine 3R price level on a later day — incorrectly stayed
+# stuck at the 2R protection level instead of progressing further, because
+# risk was being measured from the wrong, already-moved reference point.
+# Fixed by tracking initial_stop_loss (new column, set once at entry, never
+# modified) as the permanent 1R reference, in trailing_stop.py — the ONE
+# implementation both live trading and the backtest engine now import,
+# rather than two copies that could drift apart the way this one already had.
+#
 # v8 change — alpha_engine.py (built and independently tested against
 # synthetic data in a prior step — see ALPHA_ENGINE_DESIGN.md) is now wired
 # in as a conviction-scoring layer ON TOP OF signal_generator.py, not in
@@ -116,20 +142,14 @@ PROTECT_PROGRESS_PCT   = 0.80   # never replace a position >80% of the way to ta
 # large a bet it gets within the existing risk-budget system, and (c) which
 # position wins when two signals compete for a limited slot — replacing the
 # old crude confidence×risk_reward_ratio heuristic used for all three.
-PATTERN_WEIGHTS_CSV     = 'pattern_weights.csv'
-MIN_ALPHA_SCORE_TO_TRADE = 40   # must clear Tier 3 ("Marginal") — Tier 4 is the engine's own "pass" signal
+PATTERN_WEIGHTS_CSV = 'pattern_weights.csv'
 
-# Position size multiplier by conviction tier, applied BEFORE the existing
-# portfolio risk-budget check (Step 6) — which remains the hard final
-# constraint, unchanged from Step 2. This is what makes conviction actually
-# affect bet size, not just gating: a Tier 1 setup gets sized up, a Tier 3
-# setup gets sized down, within the same risk limits either way.
-TIER_SIZE_MULTIPLIER = {
-    'Tier 1 — High Conviction':      1.25,
-    'Tier 2 — Moderate Conviction':  1.00,
-    'Tier 3 — Marginal':             0.65,
-    'Tier 4 — Low Conviction / Pass': 0.0,   # shouldn't reach here given MIN_ALPHA_SCORE_TO_TRADE, safe default anyway
-}
+# MIN_ALPHA_SCORE_TO_TRADE and TIER_SIZE_MULTIPLIER now live as class
+# constants on alpha_engine.CompositeAlphaScore (moved there so the backtest
+# engine references the exact same values instead of a second, separately
+# maintained copy — see alpha_engine.py for the full reasoning). Read here
+# via the already-instantiated alpha_scorer further down, not redefined.
+
 
 
 
@@ -369,8 +389,15 @@ def run_eod():
     if missing_held:
         logger.warning(f"  ⚠️ Still no price for held symbols after retries: {missing_held}")
 
-    # ── Step 2: Exit checks ───────────────────────────────────────────────────
-    logger.info("\n[Step 2] Checking open trades for exits...")
+    # ── Step 2: Trailing stops, then exit checks ─────────────────────────────
+    # Trailing stops applied FIRST and deliberately separate from the exit
+    # check that follows — a position ratcheted up this run should be
+    # evaluated against its NEW stop immediately, not next run.
+    logger.info("\n[Step 2] Applying trailing stops...")
+    n_trailed = paper_mgr.apply_trailing_stops(latest_prices)
+    logger.info(f"  Stops raised on {n_trailed} position(s)")
+
+    logger.info("\n[Step 2b] Checking open trades for exits...")
     trades_closed = paper_mgr.update_trades(latest_prices, max_hold_days=MAX_HOLD_DAYS)
     logger.info(f"  Trades closed this run: {trades_closed}")
 
@@ -571,11 +598,11 @@ def run_eod():
                                         f"(insufficient factor history) — skipped")
                         skipped_alpha += 1
                         continue
-                    if alpha_result['composite_score'] < MIN_ALPHA_SCORE_TO_TRADE:
+                    if alpha_result['composite_score'] < alpha_scorer.MIN_ALPHA_SCORE_TO_TRADE:
                         if skipped_alpha < 3:
                             logger.info(f"    {symbol}: technical BUY but alpha score "
-                                        f"{alpha_result['composite_score']} is below the {MIN_ALPHA_SCORE_TO_TRADE} "
-                                        f"minimum ({alpha_result['tier']}) — skipped")
+                                        f"{alpha_result['composite_score']} is below the "
+                                        f"{alpha_scorer.MIN_ALPHA_SCORE_TO_TRADE} minimum ({alpha_result['tier']}) — skipped")
                         elif skipped_alpha == 3:
                             logger.info("    ... further alpha-gate skips suppressed (see summary count below)")
                         skipped_alpha += 1
@@ -584,7 +611,7 @@ def run_eod():
                     details['alpha_score'] = alpha_result['composite_score']
                     details['alpha_tier']  = alpha_result['tier']
 
-                    tier_mult = TIER_SIZE_MULTIPLIER.get(alpha_result['tier'], 1.0)
+                    tier_mult = alpha_scorer.TIER_SIZE_MULTIPLIER.get(alpha_result['tier'], 1.0)
                     if tier_mult != 1.0:
                         details['position_size'] = max(1, int(details['position_size'] * tier_mult))
                         details['risk']   = round(details['position_size'] * risk_per_share, 2)
