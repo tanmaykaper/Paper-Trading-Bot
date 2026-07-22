@@ -17,6 +17,7 @@ import numpy as np
 import logging
 from datetime import datetime
 import os
+from trailing_stop import compute_trailing_stop
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ class PaperTradingManager:
                 'exit_date', 'exit_price', 'exit_reason',
                 'gross_pnl', 'commission', 'net_pnl', 'hold_days', 'entry_type',
                 'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier',
+                'initial_stop_loss',
             ]).to_csv(self.csv_path, index=False)
             logger.info(f"✓ Created {self.csv_path}")
 
@@ -124,7 +126,8 @@ class PaperTradingManager:
 
         for col in ['exit_date', 'exit_price', 'exit_reason',
                     'gross_pnl', 'commission', 'net_pnl', 'hold_days',
-                    'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier']:
+                    'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier',
+                    'initial_stop_loss']:
             if col not in df.columns:
                 df[col] = np.nan
 
@@ -280,6 +283,7 @@ class PaperTradingManager:
                 'entry_date':    datetime.now().strftime('%Y-%m-%d'),
                 'entry_price':   round(entry_price,  2),
                 'stop_loss':     round(stop_loss,    2),
+                'initial_stop_loss': round(stop_loss, 2),   # immutable — see trailing_stop.py for why
                 'target_price':  round(target_price, 2),
                 'position_size': int(position_size),
                 'status':        'OPEN',
@@ -311,6 +315,64 @@ class PaperTradingManager:
         except Exception as e:
             logger.error(f"Error opening trade for {symbol}: {e}")
             return False
+
+    def apply_trailing_stops(self, latest_prices):
+        """
+        Ratchets stop_loss upward for every OPEN position using
+        trailing_stop.compute_trailing_stop() — the SAME function
+        swing_trading_bot.py's backtest uses, so live trading and
+        backtesting run identical trailing-stop economics rather than two
+        implementations that could quietly drift apart (see trailing_stop.py
+        for the bug that motivated sharing one implementation instead of two).
+
+        Must be called BEFORE update_trades() in the daily run, so that if a
+        position closes today, it closes against its current (possibly
+        just-ratcheted) stop, not a stale one.
+
+        Positions with no entry in latest_prices are left untouched for this
+        run (same "missing price this run" handling as everywhere else in
+        this codebase — skipped, not defaulted to some assumed price).
+
+        Returns the number of positions whose stop actually moved, for
+        logging.
+        """
+        try:
+            df    = self._load_csv()
+            open_mask = df['status'] == 'OPEN'
+            if not open_mask.any():
+                return 0
+
+            moved = 0
+            for idx in df[open_mask].index:
+                symbol = df.at[idx, 'symbol']
+                if symbol not in latest_prices:
+                    continue
+
+                entry_price = float(df.at[idx, 'entry_price'])
+                current_sl  = float(df.at[idx, 'stop_loss'])
+                initial_sl_raw = df.at[idx, 'initial_stop_loss']
+                # Graceful migration: a position opened before this column
+                # existed has no recorded initial_stop_loss. Bootstrap it
+                # from whatever the current stop_loss is right now — not
+                # dangerous, just means trailing starts fresh from today
+                # for that one position instead of from its true original.
+                initial_sl = float(initial_sl_raw) if pd.notna(initial_sl_raw) and initial_sl_raw != '' else current_sl
+
+                new_sl = compute_trailing_stop(entry_price, initial_sl, current_sl, float(latest_prices[symbol]))
+                if new_sl > current_sl:
+                    df.at[idx, 'stop_loss'] = new_sl
+                    if pd.isna(initial_sl_raw) or initial_sl_raw == '':
+                        df.at[idx, 'initial_stop_loss'] = initial_sl   # backfill for next time
+                    moved += 1
+                    logger.info(f"  📈 {symbol}: trailing stop raised ₹{current_sl:.2f} → ₹{new_sl:.2f}")
+
+            if moved:
+                self._save_csv(df)
+            return moved
+
+        except Exception as e:
+            logger.error(f"Error applying trailing stops: {e}")
+            return 0
 
     def update_trades(self, symbol_prices, max_hold_days=15):
         """
