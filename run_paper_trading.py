@@ -1,5 +1,38 @@
-# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v9
+# run_paper_trading.py  ── GITHUB ACTIONS / SINGLE-RUN VERSION  v10
 # ─────────────────────────────────────────────────────────────────────────────
+# v10 change — scaled exits (partial profit-taking). Every BUY signal large
+# enough to split (position_size >= MIN_SIZE_FOR_TRANCHING) now opens as
+# THREE tranches instead of one position with one target:
+#   quick  (35%) — exits at 1.5R (signal_generator's own min_rr)
+#   core   (35%) — exits at the original planned target (3-4R)
+#   runner (30%) — no fixed target; rides the trailing stop (v9) all the
+#                  way, capturing whatever a fixed target would have capped
+#
+# Why: a single fixed target caps every winner at the same price regardless
+# of how far it runs — exactly the trades a trend/momentum system should
+# want to let ride further. Splitting the exit locks in a reliable partial
+# gain early while leaving a piece of the position genuinely open-ended.
+#
+# Architecturally, one trading decision now becomes multiple CSV rows
+# sharing one trade_group_id, each tracked and exited independently through
+# the existing update_trades()/trailing-stop machinery — no new exit logic
+# needed, tranches are just ordinary trades with different targets. What
+# DID need to change: slot counting (get_open_symbol_count(), not row
+# count — a 3-tranche position is still one symbol's worth of exposure),
+# sector counting (same fix, get_open_positions_by_sector() now dedupes by
+# symbol), and position-replacement logic (now operates on whole groups via
+# get_open_position_groups()/close_position_group(), so replacing a
+# tranched position closes all its tranches together, not just one).
+#
+# Caught and fixed while building this: a `trade_group_id or trade_id`
+# fallback for legacy (pre-this-feature) positions looked safe but wasn't —
+# NaN is truthy in Python, so a legacy row's genuinely-empty trade_group_id
+# cell (read back from CSV as NaN, not an empty string) would have made the
+# fallback silently keep the NaN instead of using trade_id. Fixed with an
+# explicit pd.notna() check; the exact same class of bug already found and
+# fixed elsewhere in this project (paper_trading_manager.py's dtype-crash
+# fix from the very first pass) — same lesson, different column.
+#
 # v9 change — trailing stops, ported from the backtest engine to live
 # trading for the first time (trailing_stop.py, new shared module). Every
 # open position's stop-loss now ratchets up as price moves favorably —
@@ -80,7 +113,7 @@ from swing_trading_bot import SwingTradingBot, SECTOR_MAP, MAX_SECTOR_EXPOSURE, 
 from paper_trading_manager import PaperTradingManager
 from notification_handler import NotificationHandler
 from alpha_engine import CompositeAlphaScore
-from signal_generator import SignalGenerator
+from signal_generator import SignalGenerator, RISK_PROFILE
 
 logging.basicConfig(
     level=logging.INFO,
@@ -150,7 +183,37 @@ PATTERN_WEIGHTS_CSV = 'pattern_weights.csv'
 # maintained copy — see alpha_engine.py for the full reasoning). Read here
 # via the already-instantiated alpha_scorer further down, not redefined.
 
-
+# ── Scaled exits (partial profit-taking) ────────────────────────────────────
+# A single fixed target either captures the whole move up to that price or
+# nothing beyond it — a hard ceiling on every winner regardless of how far
+# it runs. Splitting the exit into tranches captures a reliable partial
+# gain early (reducing give-back risk, which the trailing stop already
+# helps with) while leaving a piece of the position with NO fixed ceiling,
+# riding purely on the trailing stop (trailing_stop.py) — this is the part
+# that can capture an outsized move a single target would have capped.
+# This matters specifically for a trend/momentum system: the distribution
+# of outcomes tends to be right-skewed (most winners are moderate, a few
+# run much further), and a fixed target caps exactly the trades where that
+# skew would otherwise pay off.
+#
+#   quick  (35%) — exits at 1.5R, matching signal_generator's own min_rr
+#                  (the minimum R:R it requires to take the trade at all) —
+#                  locks in "the worst outcome that still justified entry"
+#                  early and reliably.
+#   core   (35%) — exits at the ORIGINAL target signal_generator already
+#                  computes (3-4R depending on pattern) — the planned
+#                  outcome, unchanged from a non-tranched trade.
+#   runner (30%) — no fixed target at all; rides the trailing stop
+#                  (breakeven at 1R, +1R locked at 2R, +2R locked at 3R,
+#                  keeps trailing beyond that) plus the existing time-exit
+#                  as the ultimate backstop.
+ENABLE_SCALED_EXITS   = True
+MIN_SIZE_FOR_TRANCHING = 6   # below this, tranches would round to <2 shares each — not worth splitting
+TRANCHE_CONFIG = [
+    {'label': 'quick',  'size_pct': 0.35, 'r_multiple': 1.5},   # matches RISK_PROFILE['min_rr']
+    {'label': 'core',   'size_pct': 0.35, 'r_multiple': None},  # None = use signal_generator's own target
+    {'label': 'runner', 'size_pct': 0.30, 'r_multiple': None},  # None here = no fixed target, see below
+]
 
 
 LARGECAP_UNIVERSE = [
@@ -283,6 +346,52 @@ def _existing_position_score(trade, alpha_active=True):
     conf = float(conf) if pd.notna(conf) and conf != '' else 3.0   # neutral mid-range
     rr   = float(rr)   if pd.notna(rr)   and rr   != '' else 2.0   # neutral mid-range
     return conf * rr
+
+
+def build_tranches(entry_price, stop_loss, target_price, position_size):
+    """
+    Splits one BUY signal into quick/core/runner tranches per
+    TRANCHE_CONFIG. Returns None if scaled exits are disabled or
+    position_size is too small to split meaningfully (open_trade falls
+    back to a single untranched trade in that case).
+
+    The runner tranche's target is set 1000R away — not infinite, to avoid
+    any float/CSV-serialisation edge cases, but far enough beyond any
+    realistic 15-day move that it will never actually be the reason a
+    trade closes. It's meant to be unreachable BY CONSTRUCTION: the runner
+    exits only via the trailing stop or the time-exit, never "Target Hit".
+    """
+    if not ENABLE_SCALED_EXITS or position_size < MIN_SIZE_FOR_TRANCHING:
+        return None
+
+    risk_per_share = entry_price - stop_loss
+    if risk_per_share <= 0:
+        return None
+
+    sizes = []
+    remaining = position_size
+    for i, t in enumerate(TRANCHE_CONFIG):
+        if i == len(TRANCHE_CONFIG) - 1:
+            sizes.append(remaining)   # last tranche absorbs any rounding remainder
+        else:
+            s = max(1, int(position_size * t['size_pct']))
+            sizes.append(s)
+            remaining -= s
+
+    if remaining < 0 or any(s <= 0 for s in sizes):
+        return None   # position too small to give every tranche at least 1 share
+
+    tranches = []
+    for t, size in zip(TRANCHE_CONFIG, sizes):
+        if t['label'] == 'runner':
+            tranche_target = entry_price + 1000 * risk_per_share   # effectively unreachable, see docstring
+        elif t['r_multiple'] is not None:
+            tranche_target = entry_price + t['r_multiple'] * risk_per_share
+        else:
+            tranche_target = target_price   # 'core' — signal_generator's own computed target
+        tranches.append({'label': t['label'], 'size': size, 'target_price': tranche_target})
+
+    return tranches
 
 
 def get_peak_equity(equity_csv_path, floor):
@@ -540,9 +649,8 @@ def run_eod():
 
     # ── Step 6: Scan for new signals (alpha-scored, risk-budgeted,
     #            sector-capped, with position replacement) ───────────────────
-    open_trades = paper_mgr.get_open_trades()
-    open_count  = len(open_trades)
-    slots_free  = MAX_OPEN_TRADES - open_count
+    open_count  = paper_mgr.get_open_symbol_count()   # distinct SYMBOLS, not rows — a
+    slots_free  = MAX_OPEN_TRADES - open_count          # tranched position is still one slot
 
     logger.info(f"\n[Step 6] Scanning {len(SCAN_UNIVERSE)} symbols for new signals...")
     logger.info(f"  Open: {open_count}/{MAX_OPEN_TRADES} | Slots free: {slots_free} | Free cash: ₹{paper_mgr.free_cash:,.2f}"
@@ -646,6 +754,14 @@ def run_eod():
                 # ── Sector cap: at limit → only allowed via same-sector swap ──
                 sector_at_cap = sector_counts.get(sector, 0) >= LIVE_MAX_SECTOR_EXPOSURE
 
+                # Tranches computed AFTER risk-budget resolution, using the
+                # FINAL position_size (any shrink above already applied) —
+                # see build_tranches() / TRANCHE_CONFIG for the design.
+                tranches = build_tranches(
+                    details['entry_price'], details['stop_loss'],
+                    details['target_price'], details['position_size'],
+                )
+
                 if slots_free > 0 and not sector_at_cap:
                     opened = paper_mgr.open_trade(
                         symbol=symbol,
@@ -658,6 +774,7 @@ def run_eod():
                         risk_reward_ratio=details.get('risk_reward_ratio'),
                         alpha_score=details.get('alpha_score'),
                         alpha_tier=details.get('alpha_tier'),
+                        tranches=tranches,
                     )
                     if opened:
                         new_trades  += 1
@@ -674,16 +791,20 @@ def run_eod():
                     # No free slots (or sector capped): look for a weak position
                     # to replace. If the sector itself is capped, the swap MUST
                     # come from within that same sector (sector-neutral), so it
-                    # never increases concentration beyond the cap.
+                    # never increases concentration beyond the cap. Operates on
+                    # whole position GROUPS (get_open_position_groups(), not
+                    # get_open_trades()) — a tranched position is one symbol's
+                    # worth of exposure, and replacing it means closing every
+                    # tranche together, not leaving two open and swapping one.
                     weak = find_replaceable_position(
-                        paper_mgr.get_open_trades(), details, latest_prices,
+                        paper_mgr.get_open_position_groups(), details, latest_prices,
                         sector_filter=sector if sector_at_cap else None,
                         alpha_active=alpha_active,
                     )
                     if weak is not None:
                         exit_price = float(latest_prices.get(weak['symbol'], weak['entry_price']))
-                        closed_ok = paper_mgr.close_position(
-                            weak['trade_id'], exit_price,
+                        closed_ok = paper_mgr.close_position_group(
+                            weak['group_id'], exit_price,
                             exit_reason=f'Replaced by stronger signal ({symbol})',
                         )
                         if closed_ok:
@@ -698,6 +819,7 @@ def run_eod():
                                 risk_reward_ratio=details.get('risk_reward_ratio'),
                                 alpha_score=details.get('alpha_score'),
                                 alpha_tier=details.get('alpha_tier'),
+                                tranches=tranches,
                             )
                             if opened:
                                 new_trades   += 1
