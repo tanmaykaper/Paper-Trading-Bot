@@ -81,7 +81,7 @@ class PaperTradingManager:
                 'exit_date', 'exit_price', 'exit_reason',
                 'gross_pnl', 'commission', 'net_pnl', 'hold_days', 'entry_type',
                 'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier',
-                'initial_stop_loss',
+                'initial_stop_loss', 'trade_group_id', 'tranche',
             ]).to_csv(self.csv_path, index=False)
             logger.info(f"✓ Created {self.csv_path}")
 
@@ -127,7 +127,7 @@ class PaperTradingManager:
         for col in ['exit_date', 'exit_price', 'exit_reason',
                     'gross_pnl', 'commission', 'net_pnl', 'hold_days',
                     'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier',
-                    'initial_stop_loss']:
+                    'initial_stop_loss', 'trade_group_id', 'tranche']:
             if col not in df.columns:
                 df[col] = np.nan
 
@@ -141,7 +141,8 @@ class PaperTradingManager:
         # ago never closed even when prices were fetched successfully.
         # Forcing these to 'object' dtype makes string assignment always safe,
         # regardless of pandas version or how many rows are currently empty.
-        for col in ['exit_date', 'exit_reason', 'status', 'symbol', 'side', 'entry_type', 'alpha_tier']:
+        for col in ['exit_date', 'exit_reason', 'status', 'symbol', 'side', 'entry_type',
+                    'alpha_tier', 'trade_group_id', 'tranche']:
             if col in df.columns:
                 df[col] = df[col].astype(object)
 
@@ -232,7 +233,7 @@ class PaperTradingManager:
 
     def open_trade(self, symbol, entry_price, stop_loss, target_price,
                    position_size, entry_type, confidence=None, risk_reward_ratio=None,
-                   alpha_score=None, alpha_tier=None):
+                   alpha_score=None, alpha_tier=None, tranches=None):
         """
         Open a new paper trade with capital and slot checks.
         Automatically reduces position size to fit available free cash.
@@ -249,18 +250,42 @@ class PaperTradingManager:
         confidence/risk_reward_ratio remain as the fallback for trades
         opened before the alpha engine was integrated, or on any run where
         alpha scoring itself couldn't run (e.g. insufficient index data).
+
+        tranches (optional): list of dicts, e.g.
+            [{'label': 'quick',  'size': 3, 'target_price': 145.0},
+             {'label': 'core',   'size': 3, 'target_price': 165.0},
+             {'label': 'runner', 'size': 3, 'target_price': 99999.0}]
+        sizes must sum to position_size. When given, creates MULTIPLE CSV
+        rows — one per tranche, sharing one trade_group_id — instead of a
+        single row. Every tranche shares the same entry_price/stop_loss/
+        entry_type/confidence/alpha_score (it's one trading decision split
+        into pieces with different exit points), and each is tracked and
+        exits independently via the normal update_trades()/trailing-stop
+        machinery. Slot counting, sector counting, and capital checks all
+        treat the whole group as ONE position — see get_open_symbol_count()
+        and get_open_positions_by_sector() — a 3-way tranched position still
+        only occupies one of max_open_trades' slots.
+        When tranches is None (default), behaves exactly as before: one row.
         """
         try:
-            df          = self._load_csv()
-            open_trades = df[df['status'] == 'OPEN']
+            df = self._load_csv()
 
-            if symbol in open_trades['symbol'].values:
+            if symbol in df[df['status'] == 'OPEN']['symbol'].values:
                 logger.warning(f"⚠️ {symbol} already has open trade — skipping")
                 return False
 
-            if len(open_trades) >= self.max_open_trades:
+            if self.get_open_symbol_count() >= self.max_open_trades:
                 logger.warning(f"⚠️ Max {self.max_open_trades} open trades reached — skipping {symbol}")
                 return False
+
+            if tranches:
+                total_tranche_size = sum(t['size'] for t in tranches)
+                if total_tranche_size != position_size:
+                    logger.error(
+                        f"Tranche sizes ({total_tranche_size}) don't sum to position_size "
+                        f"({position_size}) for {symbol} — falling back to a single untranched trade"
+                    )
+                    tranches = None
 
             capital_needed = entry_price * position_size
             if capital_needed > self.free_cash:
@@ -272,48 +297,123 @@ class PaperTradingManager:
                     )
                     return False
                 logger.info(f"ℹ️ {symbol}: adjusted position {position_size}→{affordable} to fit cash")
+                if tranches:
+                    # Rescale each tranche proportionally, keeping whole shares
+                    # and putting any leftover share on the largest tranche.
+                    scale = affordable / position_size
+                    scaled = [max(0, int(t['size'] * scale)) for t in tranches]
+                    leftover = affordable - sum(scaled)
+                    if scaled:
+                        scaled[scaled.index(max(scaled))] += leftover
+                    for t, s in zip(tranches, scaled):
+                        t['size'] = s
+                    tranches = [t for t in tranches if t['size'] > 0]
+                    if not tranches:
+                        logger.warning(f"⚠️ {symbol}: rescaled tranches all rounded to 0 — skipping")
+                        return False
                 position_size  = affordable
                 capital_needed = entry_price * position_size
 
-            trade_id  = self.generate_trade_id(symbol)
-            new_trade = pd.DataFrame([{
-                'trade_id':      trade_id,
-                'symbol':        symbol,
-                'side':          'LONG',
-                'entry_date':    datetime.now().strftime('%Y-%m-%d'),
-                'entry_price':   round(entry_price,  2),
-                'stop_loss':     round(stop_loss,    2),
+            trade_group_id = self.generate_trade_id(symbol)
+            base_fields = {
+                'symbol': symbol, 'side': 'LONG',
+                'entry_date': datetime.now().strftime('%Y-%m-%d'),
+                'entry_price': round(entry_price, 2),
+                'stop_loss': round(stop_loss, 2),
                 'initial_stop_loss': round(stop_loss, 2),   # immutable — see trailing_stop.py for why
-                'target_price':  round(target_price, 2),
-                'position_size': int(position_size),
-                'status':        'OPEN',
-                'exit_date':     '',
-                'exit_price':    '',
-                'exit_reason':   '',
-                'gross_pnl':     '',
-                'commission':    '',
-                'net_pnl':       '',
-                'hold_days':     '',
-                'entry_type':    entry_type,
-                'confidence':        confidence if confidence is not None else '',
+                'status': 'OPEN', 'exit_date': '', 'exit_price': '', 'exit_reason': '',
+                'gross_pnl': '', 'commission': '', 'net_pnl': '', 'hold_days': '',
+                'entry_type': entry_type,
+                'confidence': confidence if confidence is not None else '',
                 'risk_reward_ratio': round(risk_reward_ratio, 2) if risk_reward_ratio is not None else '',
-                'alpha_score':       round(alpha_score, 1) if alpha_score is not None else '',
-                'alpha_tier':        alpha_tier if alpha_tier is not None else '',
-            }])
+                'alpha_score': round(alpha_score, 1) if alpha_score is not None else '',
+                'alpha_tier': alpha_tier if alpha_tier is not None else '',
+                'trade_group_id': trade_group_id,
+            }
 
-            df = pd.concat([df, new_trade], ignore_index=True)
+            if tranches:
+                new_rows = []
+                for t in tranches:
+                    new_rows.append({
+                        **base_fields,
+                        'trade_id': f"{trade_group_id}_{t['label']}",
+                        'target_price': round(t['target_price'], 2),
+                        'position_size': int(t['size']),
+                        'tranche': t['label'],
+                    })
+                new_trades = pd.DataFrame(new_rows)
+                tranche_desc = ', '.join(f"{t['label']}={t['size']}" for t in tranches)
+                logger.info(
+                    f"✅ Trade OPENED (tranched): {symbol} @ ₹{entry_price:.2f} | "
+                    f"{len(tranches)} tranches ({tranche_desc}) | "
+                    f"Deployed: ₹{capital_needed:,.0f} | Free cash left: ₹{self.free_cash - capital_needed:,.0f}"
+                )
+            else:
+                new_trades = pd.DataFrame([{
+                    **base_fields,
+                    'trade_id': trade_group_id,
+                    'target_price': round(target_price, 2),
+                    'position_size': int(position_size),
+                    'tranche': 'full',
+                }])
+                logger.info(
+                    f"✅ Trade OPENED: {symbol} @ ₹{entry_price:.2f} | "
+                    f"Size: {position_size} | Deployed: ₹{capital_needed:,.0f} | "
+                    f"Free cash left: ₹{self.free_cash - capital_needed:,.0f}"
+                )
+
+            df = pd.concat([df, new_trades], ignore_index=True)
             self._save_csv(df)
             self.deployed_capital += capital_needed
-
-            logger.info(
-                f"✅ Trade OPENED: {symbol} @ ₹{entry_price:.2f} | "
-                f"Size: {position_size} | Deployed: ₹{capital_needed:,.0f} | "
-                f"Free cash left: ₹{self.free_cash:,.0f}"
-            )
             return True
 
         except Exception as e:
             logger.error(f"Error opening trade for {symbol}: {e}")
+            return False
+
+    def get_open_symbol_count(self):
+        """
+        Distinct SYMBOLS among OPEN trades — not row count. A position
+        split into 3 tranches (see open_trade's tranches param) is still
+        one symbol's worth of exposure and should only occupy one of
+        max_open_trades' slots, not three.
+        """
+        df = self._load_csv()
+        return df[df['status'] == 'OPEN']['symbol'].nunique()
+
+    def close_position_group(self, trade_group_id, exit_price, exit_reason):
+        """
+        Closes EVERY open tranche sharing trade_group_id at exit_price —
+        used when position-replacement logic decides to exit a whole
+        (possibly tranched) position to make room for a stronger signal.
+        Replacing just one tranche of a multi-tranche position wouldn't
+        free the slot it occupies (still the same symbol, still open), so
+        this always closes the complete group together.
+
+        Legacy positions opened before trade_group_id existed have an
+        empty value in that column — get_open_position_groups() falls back
+        to using their own trade_id as a synthetic group id for exactly
+        this case, so this method mirrors that: if nothing matches on
+        trade_group_id, try matching trade_id directly instead.
+        """
+        try:
+            df   = self._load_csv()
+            mask = (df['trade_group_id'] == trade_group_id) & (df['status'] == 'OPEN')
+            if not mask.any():
+                mask = (df['trade_id'] == trade_group_id) & (df['status'] == 'OPEN')
+            if not mask.any():
+                logger.warning(f"⚠️ close_position_group: no OPEN trades with group id {trade_group_id}")
+                return False
+
+            closed_any = False
+            for idx in df[mask].index:
+                row = df.loc[idx]
+                ok = self.close_position(row['trade_id'], exit_price, exit_reason)
+                closed_any = closed_any or ok
+                df = self._load_csv()   # re-load since close_position saved its own changes
+            return closed_any
+        except Exception as e:
+            logger.error(f"Error closing position group {trade_group_id}: {e}")
             return False
 
     def apply_trailing_stops(self, latest_prices):
@@ -533,13 +633,82 @@ class PaperTradingManager:
         same SECTOR_MAP the rest of the codebase already defines. Symbols
         not present in sector_map are grouped under their own symbol (so an
         unmapped name never silently counts against some other sector's cap).
+
+        Deduplicated by symbol — a position split into 3 tranches (see
+        open_trade's tranches param) is one symbol's worth of sector
+        exposure, not three. Without this, a single tranched position
+        would inflate its sector's count and could trip MAX_SECTOR_EXPOSURE
+        on its own.
         """
         open_trades = self.get_open_trades()
         by_sector = {}
+        seen_symbols = set()
         for t in open_trades:
+            if t['symbol'] in seen_symbols:
+                continue
+            seen_symbols.add(t['symbol'])
             sector = sector_map.get(t['symbol'], t['symbol'])
             by_sector.setdefault(sector, []).append(t['symbol'])
         return by_sector
+
+    def get_open_position_groups(self):
+        """
+        Returns one representative dict per DISTINCT open symbol, for
+        callers that need to evaluate or replace a whole position rather
+        than an individual tranche row — e.g. run_paper_trading.py's
+        position-replacement logic. All tranches sharing a trade_group_id
+        share the same entry_price/stop_loss/entry_type/confidence/
+        alpha_score by construction (one trading decision, split into
+        pieces with different exit points); position_size is summed across
+        tranches.
+
+        target_price specifically is NOT just "whichever tranche came
+        first" — tranches have deliberately different targets (quick=1.5R,
+        core=the planned target, runner=~unreachable), so an arbitrary pick
+        would badly skew any "progress toward target" calculation callers
+        do with the result (e.g. PROTECT_PROGRESS_PCT in
+        find_replaceable_position — grabbing the runner's near-infinite
+        target would make progress always look near 0%, grabbing the
+        quick tranche's near target could make progress look like 100%+
+        after a small move). The 'core' tranche represents the original,
+        planned target a non-tranched trade would have used, so that's
+        what's used here; 'full' for untranched positions; falls back to
+        whichever tranche exists if neither is present (shouldn't happen).
+
+        Each returned dict has the same shape as a get_open_trades() row,
+        plus 'position_size' replaced by the GROUP total and a new
+        'tranche_count' field.
+        """
+        open_trades = self.get_open_trades()
+        groups = {}
+        for t in open_trades:
+            raw_gid = t.get('trade_group_id')
+            # NOT a plain `or` fallback: NaN is truthy in Python
+            # (bool(float('nan')) is True), so `raw_gid or t['trade_id']`
+            # would silently keep NaN itself instead of falling through to
+            # trade_id for a legacy row with an empty trade_group_id cell —
+            # exactly the kind of NaN-vs-falsy trap this codebase has hit
+            # (and fixed) more than once already.
+            gid = raw_gid if (pd.notna(raw_gid) and raw_gid != '') else t['trade_id']
+            if gid not in groups:
+                groups[gid] = {'_tranches': [], 'position_size': 0, 'tranche_count': 0}
+            groups[gid]['_tranches'].append(t)
+            groups[gid]['position_size'] += int(t['position_size'])
+            groups[gid]['tranche_count'] += 1
+
+        result = []
+        for gid, g in groups.items():
+            tranches = g['_tranches']
+            representative = next(
+                (t for t in tranches if t.get('tranche') in ('core', 'full')),
+                tranches[0],   # fallback: shouldn't happen, but never crash over it
+            )
+            rep = dict(representative)
+            rep['position_size'] = g['position_size']
+            rep['tranche_count'] = g['tranche_count']
+            rep['group_id'] = gid   # always valid (never NaN) — use THIS for close_position_group,
+            result.append(rep)     # not rep['trade_group_id'], which may still be empty/NaN for legacy rows
+        return result
 
     # ── Reporting ─────────────────────────────────────────────────────────────
 
