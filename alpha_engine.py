@@ -127,6 +127,12 @@ class RegimeDetector:
         'STRONG_UPTREND': {
             'momentum': 1.25, 'risk_adj_momentum': 1.15, 'trend_quality': 1.15,
             'volume_conviction': 1.00, 'relative_strength': 1.10, 'overall_dampener': 1.00,
+            # Price already reflects a clean, confirmed uptrend here — a
+            # positive news read is largely redundant information rather
+            # than a new, independent signal. Slightly de-emphasised, not
+            # zeroed, since sentiment can still flag DEteriorating news on an
+            # otherwise-still-trending name before price fully catches up.
+            'sentiment': 0.90,
         },
         'STRONG_DOWNTREND': {
             # Long-only momentum has little business chasing strength into a
@@ -134,10 +140,16 @@ class RegimeDetector:
             # normal momentum read still means the same thing here.
             'momentum': 0.60, 'risk_adj_momentum': 0.60, 'trend_quality': 0.70,
             'volume_conviction': 0.90, 'relative_strength': 1.15, 'overall_dampener': 0.75,
+            # Slightly emphasised: a confirmed downtrend combined with
+            # corroborating negative news is a stronger "stay away" signal
+            # than either alone — this is exactly the combination the hard
+            # veto gate in sentiment_engine.py is built to catch early.
+            'sentiment': 1.15,
         },
         'WEAK_TREND': {
             'momentum': 1.00, 'risk_adj_momentum': 1.00, 'trend_quality': 1.00,
             'volume_conviction': 1.00, 'relative_strength': 1.00, 'overall_dampener': 1.00,
+            'sentiment': 1.00,
         },
         'CHOPPY_RANGE': {
             # Documented: momentum decays in range-bound markets. Lean more on
@@ -145,6 +157,12 @@ class RegimeDetector:
             # (genuine breakouts still show up in volume even in a choppy tape).
             'momentum': 0.65, 'risk_adj_momentum': 0.75, 'trend_quality': 1.20,
             'volume_conviction': 1.20, 'relative_strength': 0.90, 'overall_dampener': 0.90,
+            # Same logic that boosts trend_quality/volume_conviction applies
+            # here: when price action itself is the least informative (no
+            # clear trend), an independent, non-price signal is relatively
+            # MORE valuable, not less — this is the regime where sentiment's
+            # marginal contribution is highest.
+            'sentiment': 1.25,
         },
         'HIGH_VOL_STRESS': {
             # Momentum crash risk clusters here. Dampen the whole score rather
@@ -153,6 +171,14 @@ class RegimeDetector:
             # breaker (run_paper_trading.py) already also handles separately.
             'momentum': 0.55, 'risk_adj_momentum': 0.70, 'trend_quality': 0.80,
             'volume_conviction': 0.85, 'relative_strength': 0.85, 'overall_dampener': 0.65,
+            # Dampened harder than any other factor here, deliberately: high-
+            # stress periods are exactly when headline volume spikes with the
+            # WORST signal-to-noise ratio (rumor, speculation, contradictory
+            # wire updates on the same event) — trusting the soft factor as
+            # much as normal here would be trusting it most right when it's
+            # least reliable. The hard veto gate is unaffected by this tilt
+            # (it isn't part of the weighted score) and still applies in full.
+            'sentiment': 0.70,
         },
     }
 
@@ -708,12 +734,26 @@ class CompositeAlphaScore:
     not something to fake here.
     """
 
+    # 'sentiment' added as a 6th factor (see sentiment_engine.py) — deliberately
+    # the smallest weight of the six. This is an intentional design choice, not
+    # an oversight: a headline-derived signal is noisier and less directly
+    # return-predictive than the price/volume factors above (which have decades
+    # of published cross-sectional evidence behind them), so it's sized to
+    # NUDGE conviction, not dominate it. The other five weights were scaled
+    # down proportionally (×0.9) to make room for it rather than just bolting
+    # 0.10 on top uncontested — that would have silently shrunk their combined
+    # influence to ~91%/9% by accident instead of a deliberate 90%/10% split.
+    # If 'sentiment' is absent from factor_ranks (sentiment_engine.py didn't
+    # run, or a symbol had no usable news), score_symbol()'s existing
+    # missing-factor handling applies unchanged — the other five renormalise
+    # to fill 100%, exactly as they already do for any other missing factor.
     BASE_FACTOR_WEIGHTS = {
-        'momentum':           0.25,
-        'risk_adj_momentum':  0.20,
-        'trend_quality':      0.20,
-        'volume_conviction':  0.15,
-        'relative_strength':  0.20,
+        'momentum':           0.22,
+        'risk_adj_momentum':  0.18,
+        'trend_quality':      0.18,
+        'volume_conviction':  0.14,
+        'relative_strength':  0.18,
+        'sentiment':          0.10,
     }
 
     CONVICTION_TIERS = [
@@ -722,6 +762,43 @@ class CompositeAlphaScore:
         (40, 'Tier 3 — Marginal'),
         (0,  'Tier 4 — Low Conviction / Pass'),
     ]
+
+    # ── BUG FIX ──────────────────────────────────────────────────────────────
+    # run_paper_trading.py (Step 6) and swing_trading_bot.py (backtest_portfolio)
+    # both already referenced alpha_scorer.MIN_ALPHA_SCORE_TO_TRADE and
+    # alpha_scorer.TIER_SIZE_MULTIPLIER as if they lived here — but they were
+    # never actually defined on this class. Effect in live trading: every
+    # technical BUY signal hit AttributeError inside Step 6's per-symbol
+    # try/except the moment alpha_active=True (i.e. whenever Nifty data and
+    # >=2 scan-universe symbols were available — the normal case with real
+    # internet access), which silently logged "Error on {symbol}: ..." and
+    # skipped every single candidate. Net result: with the alpha engine
+    # "working", the bot could open ZERO new trades. In the backtester
+    # (use_alpha_engine=True, the default), this raised unhandled and crashed
+    # the run outright, since it isn't inside a per-symbol try there.
+    #
+    # MIN_ALPHA_SCORE_TO_TRADE = 40 matches the Tier 3/"Marginal" floor in
+    # CONVICTION_TIERS above, exactly as the run_paper_trading.py header
+    # already documented the intent to be ("a technical signal below
+    # MIN_ALPHA_SCORE_TO_TRADE (Tier 3/'Marginal') doesn't get taken") —
+    # Tier 4 (score < 40) is filtered out, Tier 3 and above pass the gate.
+    MIN_ALPHA_SCORE_TO_TRADE = 40.0
+
+    # TIER_SIZE_MULTIPLIER scales position size by conviction tier — bigger
+    # size on the strongest setups, smaller on ones that only just cleared
+    # the gate, within the SAME risk-budget cap (run_paper_trading.py applies
+    # this BEFORE the portfolio risk-budget check, so it reallocates size
+    # within the existing risk limit rather than expanding it). Tier 4 is
+    # included defensively even though MIN_ALPHA_SCORE_TO_TRADE should
+    # already exclude it upstream — if it's ever reached anyway (e.g. a
+    # caller invokes score_symbol directly without the gate), it still sizes
+    # down rather than defaulting to 1.0x.
+    TIER_SIZE_MULTIPLIER = {
+        'Tier 1 — High Conviction':     1.3,
+        'Tier 2 — Moderate Conviction': 1.0,
+        'Tier 3 — Marginal':            0.7,
+        'Tier 4 — Low Conviction / Pass': 0.5,
+    }
 
     def __init__(self):
         self.regime_detector = RegimeDetector()
