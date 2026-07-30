@@ -81,6 +81,7 @@ class PaperTradingManager:
                 'exit_date', 'exit_price', 'exit_reason',
                 'gross_pnl', 'commission', 'net_pnl', 'hold_days', 'entry_type',
                 'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier',
+                'sentiment_score', 'sentiment_tier',
                 'initial_stop_loss', 'trade_group_id', 'tranche',
             ]).to_csv(self.csv_path, index=False)
             logger.info(f"✓ Created {self.csv_path}")
@@ -127,6 +128,7 @@ class PaperTradingManager:
         for col in ['exit_date', 'exit_price', 'exit_reason',
                     'gross_pnl', 'commission', 'net_pnl', 'hold_days',
                     'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier',
+                    'sentiment_score', 'sentiment_tier',
                     'initial_stop_loss', 'trade_group_id', 'tranche']:
             if col not in df.columns:
                 df[col] = np.nan
@@ -142,7 +144,7 @@ class PaperTradingManager:
         # Forcing these to 'object' dtype makes string assignment always safe,
         # regardless of pandas version or how many rows are currently empty.
         for col in ['exit_date', 'exit_reason', 'status', 'symbol', 'side', 'entry_type',
-                    'alpha_tier', 'trade_group_id', 'tranche']:
+                    'alpha_tier', 'sentiment_tier', 'trade_group_id', 'tranche']:
             if col in df.columns:
                 df[col] = df[col].astype(object)
 
@@ -233,7 +235,8 @@ class PaperTradingManager:
 
     def open_trade(self, symbol, entry_price, stop_loss, target_price,
                    position_size, entry_type, confidence=None, risk_reward_ratio=None,
-                   alpha_score=None, alpha_tier=None, tranches=None):
+                   alpha_score=None, alpha_tier=None,
+                   sentiment_score=None, sentiment_tier=None, tranches=None):
         """
         Open a new paper trade with capital and slot checks.
         Automatically reduces position size to fit available free cash.
@@ -250,6 +253,17 @@ class PaperTradingManager:
         confidence/risk_reward_ratio remain as the fallback for trades
         opened before the alpha engine was integrated, or on any run where
         alpha scoring itself couldn't run (e.g. insufficient index data).
+
+        sentiment_score / sentiment_tier (optional): recorded from
+        sentiment_engine.SentimentEngine at entry — sentiment_score is the
+        0-100 cross-sectional percentile among that day's actual BUY
+        candidates (same scale as alpha_score, for easy side-by-side
+        reading), sentiment_tier its label. Purely a RECORD of what the
+        sentiment engine saw at entry, for later empirical review of
+        whether it's actually adding value — it does not feed replacement
+        scoring (alpha_score already governs that; see run_paper_trading.py
+        for how the two independently gate a trade before it ever reaches
+        this method).
 
         tranches (optional): list of dicts, e.g.
             [{'label': 'quick',  'size': 3, 'target_price': 145.0},
@@ -328,6 +342,8 @@ class PaperTradingManager:
                 'risk_reward_ratio': round(risk_reward_ratio, 2) if risk_reward_ratio is not None else '',
                 'alpha_score': round(alpha_score, 1) if alpha_score is not None else '',
                 'alpha_tier': alpha_tier if alpha_tier is not None else '',
+                'sentiment_score': round(sentiment_score, 1) if sentiment_score is not None else '',
+                'sentiment_tier': sentiment_tier if sentiment_tier is not None else '',
                 'trade_group_id': trade_group_id,
             }
 

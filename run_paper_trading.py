@@ -114,6 +114,7 @@ from paper_trading_manager import PaperTradingManager
 from notification_handler import NotificationHandler
 from alpha_engine import CompositeAlphaScore
 from signal_generator import SignalGenerator, RISK_PROFILE
+from sentiment_engine import SentimentEngine
 
 logging.basicConfig(
     level=logging.INFO,
@@ -182,6 +183,37 @@ PATTERN_WEIGHTS_CSV = 'pattern_weights.csv'
 # engine references the exact same values instead of a second, separately
 # maintained copy — see alpha_engine.py for the full reasoning). Read here
 # via the already-instantiated alpha_scorer further down, not redefined.
+
+# ── Sentiment engine integration (sentiment_engine.py) ──────────────────────
+# Deliberately fetched LAZILY — only for symbols that already produced a
+# technical BUY signal in Step 6a below, NOT for the whole ~100-symbol scan
+# universe up front. Unlike the price-based alpha factors (computed for free
+# from OHLCV data already bulk-fetched in Step 5), sentiment needs a fresh
+# network call PER symbol (news fetch), and this project has already been
+# bitten once by GitHub Actions IP rate-limiting under too much fetch volume
+# (see data_fetcher_free.py's own history) — no reason to invite a repeat
+# for symbols that were never going to trade today anyway. In practice this
+# means sentiment only ever fetches for a handful of symbols per run, not
+# the whole universe.
+#
+# Two independent effects, deliberately kept separate (see sentiment_engine.
+# SentimentEngine's own docstring for the full reasoning):
+#   • SOFT — cross-sectional sentiment percentile merged into factor_ranks
+#     as alpha_engine's optional 6th 'sentiment' factor (10% weight).
+#   • HARD — an absolute-threshold veto that can reject a trade outright on
+#     fresh, corroborated bad news (fraud/litigation cluster, or a pile-up
+#     of strongly negative headlines), independent of how the other factors
+#     score. This can't be a percentile effect — "worst sentiment among
+#     today's 3 candidates" doesn't mean "actually bad news" — so it uses
+#     its own fixed thresholds instead.
+#
+# NOT wired into swing_trading_bot.py's backtester: backtesting sentiment's
+# actual contribution would need a free, dated historical news archive that
+# doesn't exist — fetching TODAY's news while replaying a HISTORICAL price
+# bar would be lookahead bias, not a real backtest. This can only be
+# evaluated prospectively, from here forward, the same way Tanmay already
+# plans to validate the rest of this system empirically — not retrofitted
+# onto historical price replay.
 
 # ── Scaled exits (partial profit-taking) ────────────────────────────────────
 # A single fixed target either captures the whole move up to that price or
@@ -661,6 +693,7 @@ def run_eod():
     skipped_risk  = 0
     skipped_sector = 0
     skipped_alpha  = 0
+    skipped_sentiment = 0
     signals_found = []
 
     if circuit_breaker_active:
@@ -668,6 +701,14 @@ def run_eod():
     elif paper_mgr.free_cash < 500:
         logger.info(f"  Free cash ₹{paper_mgr.free_cash:.0f} too low — skipping scan")
     else:
+        # ── Step 6a: technical BUY candidates only (no scoring yet) ─────────
+        # Split out from the scoring/execution loop specifically so sentiment
+        # fetching (Step 6b, right below) knows the full candidate list
+        # before it fetches anything — needed both to rank sentiment
+        # cross-sectionally against today's actual candidates (not the whole
+        # universe) and to avoid fetching news for symbols that never even
+        # produced a signal.
+        buy_candidates = []   # [(symbol, details), ...]
         for symbol, df in universe_dfs.items():
             try:
                 fund = bot.get_fundamentals_safe(symbol)
@@ -676,7 +717,6 @@ def run_eod():
                     current_equity=total_equity,   # true equity, not free_cash — see header
                     market_regime=regime,
                 )
-
                 if sig != 'BUY':
                     continue
 
@@ -687,6 +727,46 @@ def run_eod():
                 details['risk'] = round(details.get('position_size', 0) * risk_per_share, 2)
                 details.setdefault('reward', round(
                     details.get('position_size', 0) * (details['target_price'] - details['entry_price']), 2))
+
+                buy_candidates.append((symbol, details))
+            except Exception as e:
+                logger.error(f"  Error scanning {symbol}: {e}")
+
+        logger.info(f"  Step 6a: {len(buy_candidates)} technical BUY signal(s) found")
+
+        # ── Step 6b: sentiment fetch + cross-sectional rank, candidates only ─
+        sentiment_engine = SentimentEngine()
+        sentiment_active  = False
+        sentiment_readings = {}
+        sentiment_ranks     = {}
+        if buy_candidates:
+            try:
+                candidate_symbols = [s for s, _ in buy_candidates]
+                sentiment_readings = sentiment_engine.score_universe(candidate_symbols)
+                sentiment_ranks    = sentiment_engine.rank_universe(sentiment_readings)
+                for symbol in candidate_symbols:
+                    if symbol in sentiment_ranks:
+                        factor_ranks.setdefault(symbol, {})['sentiment'] = sentiment_ranks[symbol]
+                sentiment_active = True
+                n_scored = sum(1 for r in sentiment_readings.values() if r.get('reason') is None)
+                logger.info(f"  Step 6b: sentiment scored for {n_scored}/{len(candidate_symbols)} "
+                            f"candidates (others had no usable recent news — treated as neutral/no opinion)")
+            except Exception as e:
+                logger.error(
+                    f"  ⚠️ Sentiment scoring unavailable this run ({e}) — proceeding without "
+                    f"the sentiment factor and veto gate, same as a run before this integration existed."
+                )
+
+        # ── Step 6c: alpha score, sentiment veto, risk budget, sector cap,
+        #             replacement, and actually opening trades ───────────────
+        for symbol, details in buy_candidates:
+            try:
+                # risk_per_share was already used to compute details['risk']
+                # back in Step 6a; recomputed here (Step 6c is a separate
+                # loop over the same candidates) purely for the tier-size and
+                # risk-budget resizing math below — same formula, not a
+                # different number.
+                risk_per_share = details['entry_price'] - details['stop_loss']
 
                 # ── Alpha engine conviction scoring (only if it's active this
                 #    run — see Step 5). Gates whether a technically-valid
@@ -724,6 +804,25 @@ def run_eod():
                         details['position_size'] = max(1, int(details['position_size'] * tier_mult))
                         details['risk']   = round(details['position_size'] * risk_per_share, 2)
                         details['reward'] = round(details['position_size'] * (details['target_price'] - details['entry_price']), 2)
+
+                # ── Sentiment hard veto (independent of the alpha gate above
+                #    and of whether alpha scoring is even active this run —
+                #    see the Sentiment engine integration note near the top
+                #    of this file for why this is a separate, absolute-
+                #    threshold check rather than folded into the composite
+                #    score). A technically strong, high-alpha setup on a name
+                #    with a fresh, corroborated fraud/litigation cluster or a
+                #    pile-up of strongly negative headlines gets rejected
+                #    here regardless of how good the other factors look.
+                if sentiment_active and symbol in sentiment_readings:
+                    reading = sentiment_readings[symbol]
+                    blocked, veto_reason = sentiment_engine.check_veto(reading)
+                    if blocked:
+                        logger.info(f"    {symbol}: technical BUY (and alpha-gate pass) but {veto_reason} — skipped")
+                        skipped_sentiment += 1
+                        continue
+                    details['sentiment_score'] = sentiment_ranks.get(symbol)   # 0-100 percentile, or None if unranked
+                    details['sentiment_tier']  = SentimentEngine.tier(sentiment_ranks.get(symbol))
 
                 signals_found.append((symbol, details))
                 sector = SECTOR_MAP.get(symbol, symbol)
@@ -774,6 +873,8 @@ def run_eod():
                         risk_reward_ratio=details.get('risk_reward_ratio'),
                         alpha_score=details.get('alpha_score'),
                         alpha_tier=details.get('alpha_tier'),
+                        sentiment_score=details.get('sentiment_score'),
+                        sentiment_tier=details.get('sentiment_tier'),
                         tranches=tranches,
                     )
                     if opened:
@@ -819,6 +920,8 @@ def run_eod():
                                 risk_reward_ratio=details.get('risk_reward_ratio'),
                                 alpha_score=details.get('alpha_score'),
                                 alpha_tier=details.get('alpha_tier'),
+                                sentiment_score=details.get('sentiment_score'),
+                                sentiment_tier=details.get('sentiment_tier'),
                                 tranches=tranches,
                             )
                             if opened:
@@ -840,17 +943,18 @@ def run_eod():
         logger.info(f"\n  {label} ({len(signals_found)}):")
         for sym, det in signals_found:
             alpha_note = f" | alpha={det['alpha_score']} ({det['alpha_tier']})" if det.get('alpha_score') is not None else ""
+            sentiment_note = f" | sentiment={det['sentiment_score']} ({det['sentiment_tier']})" if det.get('sentiment_score') is not None else ""
             logger.info(
                 f"    🎯 {sym} | {det['entry_type']} | "
                 f"Entry ₹{det['entry_price']:.2f} | SL ₹{det['stop_loss']:.2f} | "
                 f"Target ₹{det['target_price']:.2f} | R:R 1:{det['risk_reward_ratio']:.1f} | "
-                f"conf={det.get('confidence')}{alpha_note}"
+                f"conf={det.get('confidence')}{alpha_note}{sentiment_note}"
             )
     else:
         logger.info("  No new BUY signals today")
     logger.info(f"  New trades opened: {new_trades}  (replacements: {replacements}, "
-                f"skipped on alpha gate: {skipped_alpha}, skipped on risk budget: {skipped_risk}, "
-                f"skipped on sector cap: {skipped_sector})")
+                f"skipped on alpha gate: {skipped_alpha}, skipped on sentiment veto: {skipped_sentiment}, "
+                f"skipped on risk budget: {skipped_risk}, skipped on sector cap: {skipped_sector})")
 
     # ── Step 7: Equity snapshot ───────────────────────────────────────────────
     logger.info("\n[Step 7] Logging equity snapshot...")

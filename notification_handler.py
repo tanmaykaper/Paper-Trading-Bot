@@ -269,6 +269,52 @@ class NotificationHandler:
         
         return sms
     
+    def send_alert(self, subject, body):
+        """
+        Generic operational/system-health alert email — distinct from
+        send_signal() (which expects a trade-signal-shaped dict) and
+        _send_email() (which hardcodes a "SWING TRADE SIGNAL" subject line).
+
+        Added to fix a real bug: run_paper_trading.py already calls
+        alert_notifier.send_alert(subject=..., body=...) at two safety
+        checkpoints (price-fetch health check failing, and the drawdown
+        circuit breaker activating) — but this method never existed here,
+        so triggering EITHER condition raised AttributeError and crashed
+        the entire run_eod() outright, since neither call site is wrapped
+        in a try/except. Worse, this meant the exact conditions meant to
+        warn Tanmay something was wrong (degraded price data, or a
+        drawdown halt) would silently fail to notify him at all — the
+        crash happened inside the call meant to send that warning.
+
+        Never raises — an alert failing to send should never crash the run
+        that was trying to warn about a problem in the first place. Always
+        logs the alert (visible in GitHub Actions logs) regardless of
+        whether email is configured or delivery succeeds.
+        """
+        logger.warning(f"🔔 ALERT: {subject}\n{body}")
+
+        if not self.use_email:
+            return False
+
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = self.email_sender
+            msg['To'] = self.email_recipient
+            msg['Subject'] = f"⚠️ {subject}"
+            msg.attach(MIMEText(body.replace('\n', '<br>'), 'html'))
+
+            with smtplib.SMTP('smtp.gmail.com', 587) as server:
+                server.starttls()
+                server.login(self.email_sender, self.email_password)
+                server.send_message(msg)
+
+            logger.info(f"✓ Alert email sent to {self.email_recipient}")
+            return True
+
+        except Exception as e:
+            logger.error(f"✗ Alert email failed: {str(e)}")
+            return False
+
     def send_test_email(self):
         """Send test email to verify setup"""
         try:
