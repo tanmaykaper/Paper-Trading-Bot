@@ -28,43 +28,84 @@ load_dotenv()
 
 SECTOR_MAP = {
     # IT
-    'TCS':'IT','INFY':'IT','WIPRO':'IT','HCLTECH':'IT','TECHM':'IT','LTIM':'IT',
+    # LTIM -> LTM: LTIMindtree changed its NSE/BSE trading symbol from LTIM to
+    # LTM effective 27 Feb 2026 (company rebrand to "LTM Limited"). The old
+    # 'LTIM' symbol has been dead since then — every fetch for it errors out.
+    'TCS':'IT','INFY':'IT','WIPRO':'IT','HCLTECH':'IT','TECHM':'IT','LTM':'IT',
     'MPHASIS':'IT','PERSISTENT':'IT','COFORGE':'IT',
+    # KPITTECH/TATAELXSI/INTELLECT/HAPPSTMNDS were previously missing from this
+    # map entirely — not wrong, just absent, which silently made each one
+    # count as its OWN one-off "sector" (see SECTOR_MAP.get(symbol, symbol)
+    # fallback in run_paper_trading.py) instead of sharing the real IT sector
+    # cap with the rest of this bucket.
+    'KPITTECH':'IT', 'TATAELXSI':'IT', 'INTELLECT':'IT', 'HAPPSTMNDS':'IT',
     # Banks
     'HDFCBANK':'BANK','ICICIBANK':'BANK','SBIN':'BANK','KOTAKBANK':'BANK',
     'AXISBANK':'BANK','INDUSINDBK':'BANK','FEDERALBNK':'BANK','BANDHANBNK':'BANK',
+    'AUBANK':'BANK', 'RBLBANK':'BANK',   # previously missing, same issue as above
     # Energy
     'RELIANCE':'ENERGY','ONGC':'ENERGY','BPCL':'ENERGY','IOC':'ENERGY','GAIL':'ENERGY',
     # FMCG
     'HINDUNILVR':'FMCG','ITC':'FMCG','NESTLEIND':'FMCG','DABUR':'FMCG',
     'MARICO':'FMCG','GODREJCP':'FMCG',
+    'TATACONSUM':'FMCG', 'VSTIND':'FMCG',   # previously missing (staples/tobacco)
     # Auto
-    'MARUTI':'AUTO','TATAMOTOR':'AUTO','BAJAJ-AUTO':'AUTO','EICHERMOT':'AUTO',
+    # TATAMOTOR -> TATAMOTORS: this was a plain typo (missing the trailing S)
+    # independent of anything else — the symbol has never once resolved.
+    # Separately, Tata Motors underwent a full demerger effective 1 Oct 2025:
+    # the original listed entity was renamed Tata Motors Passenger Vehicles
+    # (kept trading under the NSE symbol TATAMOTORS per Yahoo Finance/
+    # yfinance, which is what this fix targets), while the commercial-
+    # vehicles business split off into a NEW company trading as TMCV. TMCV
+    # isn't added here since adding a brand-new stock to the universe is a
+    # strategy decision, not a bug fix — worth considering separately if
+    # you want CV-cycle/defense-vehicle exposure alongside the DEFENCE bucket.
+    'MARUTI':'AUTO','TATAMOTORS':'AUTO','BAJAJ-AUTO':'AUTO','EICHERMOT':'AUTO',
     'M&M':'AUTO','HEROMOTOCO':'AUTO',
+    'MOTHERSON':'AUTO', 'BALKRISIND':'AUTO', 'SUPRAJIT':'AUTO',   # previously missing (auto ancillaries)
     # Metals
     'TATASTEEL':'METAL','JSWSTEEL':'METAL','HINDALCO':'METAL','SAIL':'METAL',
+    'APLAPOLLO':'METAL', 'RATNAMANI':'METAL',   # previously missing (steel tube/pipe manufacturers)
     # Paint / Consumer
     'ASIANPAINT':'PAINT','BERGERPAINTS':'PAINT',
     'TITAN':'CONSUMER','PIDILITIND':'CONSUMER','VOLTAS':'CONSUMER',
+    'RADICO':'CONSUMER',   # previously missing (branded consumer discretionary/alcobev)
     # Infra / Capital Goods
     'LT':'INFRA','ADANIPORTS':'INFRA','ABB':'CAPGOODS','SIEMENS':'CAPGOODS',
-    # Cement
+    'GRINDWELL':'CAPGOODS', 'DIXON':'CAPGOODS', 'AMBER':'CAPGOODS',   # previously missing (industrial/EMS manufacturers)
+    # Chemicals — new bucket. These four were all previously missing from
+    # SECTOR_MAP and are all specialty-chemical names that move together on
+    # the same input-cost/China-dumping/export-demand narratives, same
+    # "shouldn't each count as their own sector" reasoning as NEWAGE_TECH/
+    # DEFENCE/RENEWABLE_EV above.
+    'DEEPAKNTR':'CHEMICALS', 'AARTIIND':'CHEMICALS', 'VINATIORGA':'CHEMICALS',
+    'NAVINFLUOR':'CHEMICALS',
+    # Cement / building materials
     'ULTRACEMCO':'CEMENT','SHREECEM':'CEMENT','AMBUJACEM':'CEMENT',
+    'KAJARIACER':'CEMENT',   # previously missing (ceramic tiles — building-materials/housing-cycle theme)
     # Telecom
     'BHARTIARTL':'TELECOM',
     # NBFC / Finance
     'BAJFINANCE':'NBFC','BAJAJFINSV':'NBFC','CHOLAFIN':'NBFC','MUTHOOTFIN':'NBFC',
+    'CREDITACC':'NBFC',   # previously missing (microfinance NBFC)
     # Pharma
     'SUNPHARMA':'PHARMA','DRREDDY':'PHARMA','CIPLA':'PHARMA','DIVISLAB':'PHARMA',
+    'ALKEM':'PHARMA', 'TORNTPHARM':'PHARMA', 'AUROPHARMA':'PHARMA',
+    'GRANULES':'PHARMA', 'IPCALAB':'PHARMA',   # previously missing
     # Realty
     'DLF':'REALTY','GODREJPROP':'REALTY','OBEROIRLTY':'REALTY',
+    'SOBHA':'REALTY', 'PHOENIXLTD':'REALTY',   # previously missing
 
     # New-age tech / internet — added alongside HIGH_GROWTH_MOMENTUM_UNIVERSE
     # in run_paper_trading.py. Grouping these together matters: they tend to
     # move together on sentiment/risk-appetite shifts, so without this they'd
     # each silently count as their own separate "sector" and the concentration
     # cap would do nothing to prevent a fully correlated cluster of bets.
-    'ZOMATO':'NEWAGE_TECH', 'NYKAA':'NEWAGE_TECH', 'PAYTM':'NEWAGE_TECH',
+    #
+    # ZOMATO -> ETERNAL: Zomato Ltd renamed its corporate entity to Eternal
+    # Ltd and changed its NSE/BSE ticker from ZOMATO to ETERNAL effective
+    # 9 April 2025 — the old symbol has been dead for well over a year.
+    'ETERNAL':'NEWAGE_TECH', 'NYKAA':'NEWAGE_TECH', 'PAYTM':'NEWAGE_TECH',
     'POLICYBZR':'NEWAGE_TECH', 'DELHIVERY':'NEWAGE_TECH', 'IRCTC':'NEWAGE_TECH',
     'NAUKRI':'NEWAGE_TECH', 'INDIAMART':'NEWAGE_TECH', 'CARTRADE':'NEWAGE_TECH',
     'MAPMYINDIA':'NEWAGE_TECH', 'EASEMYTRIP':'NEWAGE_TECH', 'NAZARA':'NEWAGE_TECH',
