@@ -124,8 +124,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-INITIAL_EQUITY  = 10_000
-MAX_OPEN_TRADES = 5
+INITIAL_EQUITY  = 50_000
+# Raised from 5 -> 10 (confirmed explicitly) alongside the 10k -> 50k capital
+# increase, specifically to observe the bot's decision-making over a higher
+# volume of concurrent trades — capital alone wouldn't have done this; it
+# would've just made the same 5 slots bigger. Average capital per slot goes
+# from ~₹2,000 to ~₹5,000 (still a real, risk-managed position, not noise).
+# LIVE_MAX_SECTOR_EXPOSURE (4/sector, below) doesn't need to move with this:
+# filling all 10 slots now requires spreading across at least 3 sectors
+# (4+4+2) instead of effectively 2 (4+1 out of 5) — slightly MORE forced
+# diversification than before, not less, so no separate tuning needed there.
+MAX_OPEN_TRADES = 10
 MAX_HOLD_DAYS   = 15
 
 TRADES_CSV = 'paper_trades.csv'
