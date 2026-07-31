@@ -254,9 +254,9 @@ LARGECAP_UNIVERSE = [
     'MARUTI', 'TATASTEEL', 'BAJFINANCE', 'KOTAKBANK', 'LT',
     'AXISBANK', 'TITAN', 'WIPRO', 'ULTRACEMCO', 'NESTLEIND',
     'HCLTECH', 'TECHM', 'SUNPHARMA', 'DRREDDY', 'CIPLA',
-    'TATAMOTOR', 'BAJAJ-AUTO', 'HINDALCO', 'JSWSTEEL',
+    'TATAMOTORS', 'BAJAJ-AUTO', 'HINDALCO', 'JSWSTEEL',
     'ONGC', 'BPCL', 'GAIL', 'SIEMENS', 'ABB', 'DLF',
-    'INDUSINDBK', 'FEDERALBNK', 'MPHASIS', 'LTIM', 'CHOLAFIN',
+    'INDUSINDBK', 'FEDERALBNK', 'MPHASIS', 'LTM', 'CHOLAFIN',
 ]
 
 # NOTE: I can't reach yfinance/NSE from this sandbox to verify every ticker
@@ -284,8 +284,11 @@ MIDCAP_UNIVERSE = [
 # search, July 2026) as currently active, not just historically notable:
 #
 #   • New-age tech/internet — high growth, high volatility, sentiment-driven.
-#     Zomato's parent renamed to Eternal Ltd in 2025 and was added to the
-#     Nifty 50; ticker remains ZOMATO on NSE/yfinance.
+#     Zomato's parent renamed to Eternal Ltd in 2025; the NSE/BSE ticker
+#     changed from ZOMATO to ETERNAL effective 9 April 2025 (confirmed via
+#     search while auditing a live run's logs — an earlier version of this
+#     comment incorrectly assumed the old ticker still worked; it hadn't for
+#     well over a year, and every fetch for it was silently erroring out).
 #   • Defence — genuinely in a live momentum phase as of mid-2026: multiple
 #     consecutive rally sessions in June/July on record defence production
 #     figures and large DAC procurement approvals (₹52,000cr+ tranches).
@@ -295,12 +298,12 @@ MIDCAP_UNIVERSE = [
 #
 # Same caveat as MIDCAP_UNIVERSE: I don't have live yfinance/NSE access from
 # this sandbox to individually confirm every ticker still resolves — a few
-# were spot-checked via search (ZOMATO, WAAREEENER, ACMESOLAR), the rest are
+# were spot-checked via search (ETERNAL, WAAREEENER, ACMESOLAR), the rest are
 # good-faith based on current sourcing. Unresolvable tickers are skipped
 # automatically (existing safe behaviour) — prune anything that never hits.
 HIGH_GROWTH_MOMENTUM_UNIVERSE = [
     # New-age tech / internet
-    'ZOMATO', 'NYKAA', 'PAYTM', 'POLICYBZR', 'DELHIVERY', 'IRCTC',
+    'ETERNAL', 'NYKAA', 'PAYTM', 'POLICYBZR', 'DELHIVERY', 'IRCTC',
     'NAUKRI', 'INDIAMART', 'CARTRADE', 'MAPMYINDIA', 'EASEMYTRIP', 'NAZARA',
     # Defence — live momentum theme as of mid-2026, see note above
     'HAL', 'BEL', 'BDL', 'MAZDOCK', 'COCHINSHIP', 'SOLARINDS',
