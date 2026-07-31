@@ -22,7 +22,7 @@ bot = SwingTradingBot(send_emails=email_configured)
 # 40-stock universe — broad enough to always find setups
 NSE_STOCKS = [
     # IT
-    'TCS', 'INFY', 'WIPRO', 'HCLTECH', 'TECHM', 'LTIM', 'MPHASIS',
+    'TCS', 'INFY', 'WIPRO', 'HCLTECH', 'TECHM', 'LTM', 'MPHASIS',
     # Banks
     'HDFCBANK', 'ICICIBANK', 'SBIN', 'KOTAKBANK', 'AXISBANK', 'INDUSINDBK', 'FEDERALBNK',
     # FMCG / Consumer
