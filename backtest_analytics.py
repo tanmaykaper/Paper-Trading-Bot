@@ -154,8 +154,13 @@ def compute_performance_report(trades_df, equity_df, initial_equity):
 
     # ── Stratified breakdowns — the actual evidence for whether the alpha
     #    engine's ranking has real predictive value: does a higher tier
-    #    actually show better expectancy, or is it noise? ──────────────────
-    for strat_col, label in [('alpha_tier', 'by_tier'), ('market_regime', 'by_regime'), ('entry_type', 'by_pattern')]:
+    #    actually show better expectancy, or is it noise? Same question for
+    #    'tranche': is 'runner' actually outperforming 'quick'/'core' on
+    #    average, i.e. earning the added complexity — or would a plain
+    #    untranched trade (label 'full', present when use_scaled_exits=False
+    #    or a position was too small to split) have done just as well? ──────
+    for strat_col, label in [('alpha_tier', 'by_tier'), ('market_regime', 'by_regime'),
+                              ('entry_type', 'by_pattern'), ('tranche', 'by_tranche')]:
         if strat_col in trades_df.columns and trades_df[strat_col].notna().any():
             breakdown = {}
             for key, group in trades_df.dropna(subset=[strat_col]).groupby(strat_col):
@@ -202,7 +207,8 @@ def print_performance_report(report, title="BACKTEST PERFORMANCE REPORT"):
     if report.get('avg_hold_days') is not None:
         print(f"  Avg Hold Days         : {report['avg_hold_days']:>12.1f}")
 
-    for strat_col, label in [('by_tier', 'Conviction Tier'), ('by_regime', 'Market Regime'), ('by_pattern', 'Entry Pattern')]:
+    for strat_col, label in [('by_tier', 'Conviction Tier'), ('by_regime', 'Market Regime'),
+                              ('by_pattern', 'Entry Pattern'), ('by_tranche', 'Tranche')]:
         if strat_col in report:
             print(f"\n  ── Stratified by {label} ─{'─'*(46-len(label))}")
             for key, stats in report[strat_col].items():
