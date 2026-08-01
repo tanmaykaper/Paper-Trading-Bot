@@ -17,6 +17,7 @@ from signal_generator import SignalGenerator, RISK_PROFILE
 from notification_handler import NotificationHandler
 from alpha_engine import CompositeAlphaScore
 from trailing_stop import compute_trailing_stop
+from tranche_manager import build_tranches
 import os
 from dotenv import load_dotenv
 import time
@@ -268,7 +269,8 @@ class SwingTradingBot:
 
     def backtest_portfolio(self, stock_list, days=600, use_alpha_engine=True,
                             max_portfolio_risk_pct=0.16, min_alpha_score=None,
-                            tier_size_multiplier=None):
+                            tier_size_multiplier=None, use_scaled_exits=True,
+                            max_sector_exposure=None):
         """
         use_alpha_engine: when True (default), every technical BUY signal
             also gets alpha_engine's cross-sectional conviction score —
@@ -279,6 +281,20 @@ class SwingTradingBot:
             and diff the performance reports to see the alpha engine's
             actual marginal contribution, rather than trusting a single
             absolute number.
+
+        use_scaled_exits: when True (default, matches live's
+            ENABLE_SCALED_EXITS), every BUY signal large enough to split
+            (see tranche_manager.MIN_SIZE_FOR_TRANCHING) opens as THREE
+            tranches — quick/core/runner — exactly as run_paper_trading.py
+            actually trades live, instead of one position with one fixed
+            target. This is a SEPARATE toggle from use_alpha_engine
+            specifically so the two can be isolated independently: run
+            (alpha ON, tranched) vs (alpha ON, untranched) to see tranching's
+            OWN marginal contribution, holding the alpha layer constant —
+            see run_backtest.py for exactly this comparison. Before this
+            parameter existed, this method only ever simulated the
+            untranched policy, silently testing a different, older strategy
+            than the one actually live since run_paper_trading.py v10.
 
         max_portfolio_risk_pct: caps total capital-at-stake across all
             open positions simultaneously, same mechanism as Step 2's live
@@ -292,6 +308,13 @@ class SwingTradingBot:
             CompositeAlphaScore if you want to experiment with different
             thresholds; default to the same live-production values.
 
+        max_sector_exposure: override the module-level MAX_SECTOR_EXPOSURE
+            (=3) below — pass run_paper_trading.LIVE_MAX_SECTOR_EXPOSURE
+            (=4) to match live exactly, same backtest-fidelity reasoning as
+            max_portfolio_risk_pct above. Defaults to the module constant
+            if not given, preserving old behaviour for any existing caller
+            that doesn't pass this.
+
         Point-in-time correctness: every alpha_engine computation below
         uses only data available UP TO AND INCLUDING bar i — this is a
         walk-forward simulation, not a vectorized one, specifically so
@@ -300,10 +323,13 @@ class SwingTradingBot:
         a deliberately unmistakable future price shock and confirms an
         earlier bar's decisions are completely unaffected by it).
         """
+        sector_exposure_cap = MAX_SECTOR_EXPOSURE if max_sector_exposure is None else max_sector_exposure
+
         logger.info(f"\n{'='*70}")
-        logger.info(f"📊 PORTFOLIO BACKTEST v4 — {len(stock_list)} stocks, {days} days")
+        logger.info(f"📊 PORTFOLIO BACKTEST v5 — {len(stock_list)} stocks, {days} days")
         logger.info(f"Initial Equity: ₹{self.initial_equity:,} | Max trades: {self.max_open_trades} | "
-                    f"Alpha engine: {'ON' if use_alpha_engine else 'OFF (baseline)'}")
+                    f"Alpha engine: {'ON' if use_alpha_engine else 'OFF (baseline)'} | "
+                    f"Scaled exits: {'ON (tranched)' if use_scaled_exits else 'OFF (single exit)'}")
         logger.info(f"{'='*70}\n")
 
         alpha_scorer = CompositeAlphaScore() if use_alpha_engine else None
@@ -357,52 +383,87 @@ class SwingTradingBot:
 
                 bar        = all_dfs[sym].iloc[i]
                 curr_price = float(bar['close'])
-                ep, ps     = trade['entry_price'], trade['position_size']
+                ep         = trade['entry_price']
                 hold_days  = i - trade['entry_index']
 
+                # Trailing stop is computed ONCE per symbol per bar and
+                # shared across every tranche of that symbol — exactly
+                # live's behaviour (paper_trading_manager.apply_trailing_
+                # stops() ratchets each tranche ROW independently, but since
+                # every tranche shares the same entry_price/initial_stop_
+                # loss/current_price inputs, compute_trailing_stop() is
+                # deterministic and they ratchet in perfect lockstep by
+                # construction — computing it once here is the same result,
+                # not an approximation of it).
                 trade['_curr_price'] = curr_price
                 trade = self._apply_trailing_stop(trade)
                 sl = trade['stop_loss']
-                tp = trade['target']
 
-                exit_triggered = False
-                exit_reason    = ''
-                exit_price     = 0.0
+                any_open = False
+                for tranche in trade['tranches']:
+                    if tranche['closed']:
+                        continue
 
-                if curr_price <= sl:
-                    exit_triggered, exit_reason, exit_price = True, 'SL Hit',     sl
-                elif curr_price >= tp:
-                    exit_triggered, exit_reason, exit_price = True, 'Target Hit', tp
-                elif hold_days >= self.max_hold_days:
-                    exit_triggered, exit_reason, exit_price = True, 'Time Exit',  curr_price
+                    exit_triggered = False
+                    exit_reason    = ''
+                    exit_price     = 0.0
 
-                if exit_triggered:
-                    commission = ps * self.commission_per_share * 2
-                    net_pnl    = (exit_price - ep) * ps - commission
+                    # Each tranche checks its OWN target against the SHARED
+                    # stop — this is the crux of scaled exits: 'quick' can
+                    # hit its near target and close while 'core'/'runner'
+                    # stay open against the same (possibly since-ratcheted)
+                    # stop, exactly as tranche_manager.build_tranches()
+                    # designs it and paper_trading_manager.update_trades()
+                    # already does live, one tranche row at a time.
+                    if curr_price <= sl:
+                        exit_triggered, exit_reason, exit_price = True, 'SL Hit',     sl
+                    elif curr_price >= tranche['target_price']:
+                        exit_triggered, exit_reason, exit_price = True, 'Target Hit', tranche['target_price']
+                    elif hold_days >= self.max_hold_days:
+                        exit_triggered, exit_reason, exit_price = True, 'Time Exit',  curr_price
 
-                    all_trades.append({
-                        'symbol':        sym,
-                        'entry_date':    trade['entry_date'],
-                        'exit_date':     bar['datetime'],
-                        'entry_price':   ep,
-                        'exit_price':    exit_price,
-                        'position_size': ps,
-                        'exit_reason':   exit_reason,
-                        'gross_pnl':     (exit_price - ep) * ps,
-                        'commission':    commission,
-                        'net_pnl':       net_pnl,
-                        'result':        'WIN' if net_pnl > 0 else 'LOSS',
-                        'hold_days':     hold_days,
-                        'entry_type':    trade['entry_type'],
-                        'market_regime': trade['market_regime'],
-                        'confidence':    trade.get('confidence', 1),
-                        'alpha_score':   trade.get('alpha_score'),
-                        'alpha_tier':    trade.get('alpha_tier'),
-                        'exit_index':    i,
-                    })
-                    self.current_equity += net_pnl
-                    self.peak_equity     = max(self.peak_equity, self.current_equity)
-                    last_exit_bar[sym]   = i
+                    if exit_triggered:
+                        ps         = tranche['size']
+                        commission = ps * self.commission_per_share * 2
+                        net_pnl    = (exit_price - ep) * ps - commission
+
+                        all_trades.append({
+                            'symbol':         sym,
+                            'entry_date':     trade['entry_date'],
+                            'exit_date':      bar['datetime'],
+                            'entry_price':    ep,
+                            'exit_price':     exit_price,
+                            'position_size':  ps,
+                            'exit_reason':    exit_reason,
+                            'gross_pnl':      (exit_price - ep) * ps,
+                            'commission':     commission,
+                            'net_pnl':        net_pnl,
+                            'result':         'WIN' if net_pnl > 0 else 'LOSS',
+                            'hold_days':      hold_days,
+                            'entry_type':     trade['entry_type'],
+                            'market_regime':  trade['market_regime'],
+                            'confidence':     trade.get('confidence', 1),
+                            'alpha_score':    trade.get('alpha_score'),
+                            'alpha_tier':     trade.get('alpha_tier'),
+                            'trade_group_id': trade['trade_group_id'],
+                            'tranche':        tranche['label'],
+                            'exit_index':     i,
+                        })
+                        self.current_equity += net_pnl
+                        self.peak_equity     = max(self.peak_equity, self.current_equity)
+                        tranche['closed'] = True
+                    else:
+                        any_open = True
+
+                # The symbol's slot only frees once EVERY tranche is closed
+                # — a still-open 'runner' on an otherwise-closed position is
+                # still real, live exposure to that symbol/sector and still
+                # occupies its one max_open_trades slot, same as
+                # get_open_symbol_count()'s live semantics (a 3-tranche
+                # position counts as ONE symbol's worth of exposure, whether
+                # opening a new slot or, here, freeing one).
+                if not any_open:
+                    last_exit_bar[sym] = i
                     to_exit.append(sym)
 
             for sym in to_exit:
@@ -452,7 +513,7 @@ class SwingTradingBot:
                         regime_result, factor_ranks = {'tilts': {}}, {}
 
                 current_agg_risk = sum(
-                    (t['entry_price'] - t['stop_loss']) * t['position_size']
+                    (t['entry_price'] - t['stop_loss']) * sum(tr['size'] for tr in t['tranches'] if not tr['closed'])
                     for t in open_trades.values()
                 )
 
@@ -461,7 +522,7 @@ class SwingTradingBot:
                         continue
 
                     sym_sector = SECTOR_MAP.get(sym, sym)
-                    if sector_counts.get(sym_sector, 0) >= MAX_SECTOR_EXPOSURE:
+                    if sector_counts.get(sym_sector, 0) >= sector_exposure_cap:
                         continue
 
                     try:
@@ -515,19 +576,39 @@ class SwingTradingBot:
                         # older version of this check used a stale 0.30
                         # while signal_generator had already moved to 0.40).
                         if capital <= self.current_equity * RISK_PROFILE['max_capital_pct']:
+                            tranches = None
+                            if use_scaled_exits:
+                                tranches = build_tranches(
+                                    det['entry_price'], det['stop_loss'],
+                                    det['target_price'], det['position_size'],
+                                )
+                            if tranches is None:
+                                # Scaled exits off, or position too small to
+                                # split meaningfully — one tranche covering
+                                # the whole size, targeting the original
+                                # planned target. Same fallback live's
+                                # open_trade() uses (see paper_trading_
+                                # manager.py) when build_tranches() returns
+                                # None, so a small/untranched position here
+                                # behaves identically to one live.
+                                tranches = [{'label': 'full', 'size': det['position_size'],
+                                             'target_price': det['target_price']}]
+                            for t in tranches:
+                                t['closed'] = False
+
                             open_trades[sym] = {
-                                'entry_price':   det['entry_price'],
-                                'stop_loss':     det['stop_loss'],
+                                'entry_price':      det['entry_price'],
+                                'stop_loss':         det['stop_loss'],
                                 'initial_stop_loss': det['stop_loss'],   # immutable — see trailing_stop.py
-                                'target':        det['target_price'],
-                                'position_size': det['position_size'],
-                                'entry_date':    all_dfs[sym].iloc[i]['datetime'],
-                                'entry_index':   i,
-                                'entry_type':    det['entry_type'],
-                                'market_regime': regime,
-                                'confidence':    det.get('confidence', 1),
-                                'alpha_score':   alpha_score,
-                                'alpha_tier':    alpha_tier,
+                                'entry_date':        all_dfs[sym].iloc[i]['datetime'],
+                                'entry_index':        i,
+                                'entry_type':         det['entry_type'],
+                                'market_regime':      regime,
+                                'confidence':         det.get('confidence', 1),
+                                'alpha_score':        alpha_score,
+                                'alpha_tier':         alpha_tier,
+                                'trade_group_id':     f"{sym}_{i}",
+                                'tranches':           tranches,
                             }
                             sector_counts[sym_sector] = sector_counts.get(sym_sector, 0) + 1
                             current_agg_risk += (det['entry_price'] - det['stop_loss']) * det['position_size']
