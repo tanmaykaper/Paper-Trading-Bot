@@ -1,7 +1,9 @@
 # swing_trading_bot.py  ── HIGH-RISK / HIGH-FREQUENCY VERSION v3
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixes vs previous:
-#   - TATAMOTORS → TATAMOTOR in SECTOR_MAP (yfinance symbol change)
+#   - Tata Motors ticker: TATAMOTOR (typo) → TATAMOTORS (post-demerger guess,
+#     turned out wrong too — kept 404ing live) → TMPV (confirmed current,
+#     see the SECTOR_MAP comment below for the full history)
 #   - _get_market_regime passes '^NSEI' which DataFetcherFree now handles
 #     correctly (no .NS suffix for index symbols)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -18,6 +20,7 @@ from notification_handler import NotificationHandler
 from alpha_engine import CompositeAlphaScore
 from trailing_stop import compute_trailing_stop
 from tranche_manager import build_tranches
+from trading_costs import round_trip_commission
 import os
 from dotenv import load_dotenv
 import time
@@ -51,17 +54,22 @@ SECTOR_MAP = {
     'MARICO':'FMCG','GODREJCP':'FMCG',
     'TATACONSUM':'FMCG', 'VSTIND':'FMCG',   # previously missing (staples/tobacco)
     # Auto
-    # TATAMOTOR -> TATAMOTORS: this was a plain typo (missing the trailing S)
-    # independent of anything else — the symbol has never once resolved.
-    # Separately, Tata Motors underwent a full demerger effective 1 Oct 2025:
-    # the original listed entity was renamed Tata Motors Passenger Vehicles
-    # (kept trading under the NSE symbol TATAMOTORS per Yahoo Finance/
-    # yfinance, which is what this fix targets), while the commercial-
-    # vehicles business split off into a NEW company trading as TMCV. TMCV
-    # isn't added here since adding a brand-new stock to the universe is a
-    # strategy decision, not a bug fix — worth considering separately if
-    # you want CV-cycle/defense-vehicle exposure alongside the DEFENCE bucket.
-    'MARUTI':'AUTO','TATAMOTORS':'AUTO','BAJAJ-AUTO':'AUTO','EICHERMOT':'AUTO',
+    # Tata Motors ticker, third time fixing this one — full history because
+    # it's a good example of why "fixed once" isn't the same as "verified":
+    #   1. 'TATAMOTOR' — plain typo (missing the trailing S), never resolved
+    #   2. 'TATAMOTORS' — corrected based on Yahoo Finance search results at
+    #      the time, which were genuinely ambiguous (some sources said TMPV,
+    #      Yahoo's own page for the entity showed TATAMOTORS). Picked wrong —
+    #      three consecutive live runs still 404'd on it.
+    #   3. 'TMPV' — confirmed via multiple current sources agreeing (Yahoo
+    #      Finance's actual quote page for TMPV.NS, Wikipedia's infobox
+    #      listing "Traded as: NSE: TMPV", TradingView), after Tata Motors'
+    #      1 Oct 2025 demerger: the passenger-vehicles + JLR entity trades as
+    #      TMPV, the commercial-vehicles spinoff as TMCV (not added here —
+    #      a new company is a strategy decision, not a bug fix; worth
+    #      considering separately for CV-cycle/defense-vehicle exposure
+    #      alongside the DEFENCE bucket).
+    'MARUTI':'AUTO','TMPV':'AUTO','BAJAJ-AUTO':'AUTO','EICHERMOT':'AUTO',
     'M&M':'AUTO','HEROMOTOCO':'AUTO',
     'MOTHERSON':'AUTO', 'BALKRISIND':'AUTO', 'SUPRAJIT':'AUTO',   # previously missing (auto ancillaries)
     # Metals
@@ -424,7 +432,7 @@ class SwingTradingBot:
 
                     if exit_triggered:
                         ps         = tranche['size']
-                        commission = ps * self.commission_per_share * 2
+                        commission = round_trip_commission(ep, exit_price, ps)
                         net_pnl    = (exit_price - ep) * ps - commission
 
                         all_trades.append({

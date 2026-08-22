@@ -30,7 +30,7 @@ NSE_STOCKS = [
     # Energy
     'RELIANCE', 'ONGC', 'BPCL', 'GAIL',
     # Auto
-    'MARUTI', 'TATAMOTORS', 'BAJAJ-AUTO', 'M&M', 'EICHERMOT',
+    'MARUTI', 'TMPV', 'BAJAJ-AUTO', 'M&M', 'EICHERMOT',
     # Metals
     'TATASTEEL', 'JSWSTEEL', 'HINDALCO', 'SAIL',
     # Pharma
