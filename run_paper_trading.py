@@ -170,6 +170,14 @@ EQUITY_CSV = 'daily_equity.csv'
 # preference. Live trading and backtesting can reasonably run different
 # risk settings; this keeps them decoupled on purpose.
 MAX_PORTFOLIO_RISK_PCT   = 0.16   # % of total equity, worst case, across the whole book
+
+# Slot-aware capital cap — see the detailed comment at its use site in Step
+# 6c for the full story (a real concentration bug this fixes: 3 symbols
+# consuming 98% of equity while 7 of 10 slots sat empty). A trade can be
+# sized up to FAIR_SHARE_FLEX times an equal split of current free cash
+# across remaining open slots — 2.0x allows genuine conviction-based size-up
+# without letting early signals starve every slot that comes after them.
+FAIR_SHARE_FLEX = 2.0
 LIVE_MAX_SECTOR_EXPOSURE = 4      # overrides swing_trading_bot.MAX_SECTOR_EXPOSURE (3) for live trading
 LIVE_MAX_DRAWDOWN        = 0.35   # overrides swing_trading_bot.MAX_DRAWDOWN_DEFAULT (0.30) for live trading
 
@@ -247,7 +255,7 @@ LARGECAP_UNIVERSE = [
     'MARUTI', 'TATASTEEL', 'BAJFINANCE', 'KOTAKBANK', 'LT',
     'AXISBANK', 'TITAN', 'WIPRO', 'ULTRACEMCO', 'NESTLEIND',
     'HCLTECH', 'TECHM', 'SUNPHARMA', 'DRREDDY', 'CIPLA',
-    'TATAMOTORS', 'BAJAJ-AUTO', 'HINDALCO', 'JSWSTEEL',
+    'TMPV', 'BAJAJ-AUTO', 'HINDALCO', 'JSWSTEEL',
     'ONGC', 'BPCL', 'GAIL', 'SIEMENS', 'ABB', 'DLF',
     'INDUSINDBK', 'FEDERALBNK', 'MPHASIS', 'LTM', 'CHOLAFIN',
 ]
@@ -754,6 +762,51 @@ def run_eod():
                         details['position_size'] = max(1, int(details['position_size'] * tier_mult))
                         details['risk']   = round(details['position_size'] * risk_per_share, 2)
                         details['reward'] = round(details['position_size'] * (details['target_price'] - details['entry_price']), 2)
+
+                # ── Slot-aware capital cap ──────────────────────────────────
+                # BUG FOUND from live logs (2026-08-19 run): signal_generator's
+                # max_capital_pct=0.40 caps any ONE trade at 40% of equity,
+                # but has no concept of how many OTHER slots still need
+                # filling. With MAX_OPEN_TRADES=10, that 40% ceiling was sized
+                # for an earlier 5-slot configuration — at 10 slots, just 2-3
+                # early signals can each get sized toward 40% and consume
+                # nearly the entire book before the other 7-8 slots ever see
+                # a rupee, permanently defeating the diversification
+                # MAX_OPEN_TRADES=10 was raised for in the first place. This
+                # is exactly what happened live: 3 symbols (HAPPSTMNDS,
+                # CARTRADE, DLF) deployed ₹49,034 of ₹50,000 equity — 98% of
+                # the entire portfolio in 3 names — while 7 of 10 slots sat
+                # empty because there was nothing left to fund them with.
+                #
+                # Fixed here, not in signal_generator.py's RISK_PROFILE,
+                # because slot/cash context (how many symbols are already
+                # open, how much free cash is left RIGHT NOW mid-loop) only
+                # exists here — signal_generator scores one candidate in
+                # isolation and structurally can't know this. max_capital_pct
+                # is left as-is as an outer backstop; THIS cap is what
+                # actually binds during normal operation.
+                #
+                # FAIR_SHARE_FLEX=2.0 still allows meaningful size-up for a
+                # genuinely high-conviction trade (matching the "willing to
+                # size up rather than spread thin" philosophy) — just not to
+                # the point of starving every slot behind it. slots_free
+                # already decrements live as earlier candidates in this same
+                # run open (see Step 6c's running slots_free -= 1), so this
+                # correctly tightens as the day's remaining room shrinks.
+                remaining_slots  = max(1, slots_free)
+                fair_share_cap   = (paper_mgr.free_cash / remaining_slots) * FAIR_SHARE_FLEX
+                capital_wanted   = details['entry_price'] * details['position_size']
+                if capital_wanted > fair_share_cap and details['entry_price'] > 0:
+                    fair_share_size = max(1, int(fair_share_cap / details['entry_price']))
+                    if fair_share_size < details['position_size']:
+                        logger.info(
+                            f"    {symbol}: position size reduced {details['position_size']}→{fair_share_size} "
+                            f"— reserving room for {remaining_slots - 1} other slot(s) "
+                            f"(fair share ₹{fair_share_cap:,.0f} of ₹{paper_mgr.free_cash:,.0f} free cash)"
+                        )
+                        details['position_size'] = fair_share_size
+                        details['risk']   = round(fair_share_size * risk_per_share, 2)
+                        details['reward'] = round(fair_share_size * (details['target_price'] - details['entry_price']), 2)
 
                 # ── Sentiment hard veto (independent of the alpha gate above
                 #    and of whether alpha scoring is even active this run —
