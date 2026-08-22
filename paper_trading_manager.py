@@ -18,6 +18,7 @@ import logging
 from datetime import datetime
 import os
 from trailing_stop import compute_trailing_stop
+from trading_costs import round_trip_commission
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -53,9 +54,17 @@ class PaperTradingManager:
     """
 
     def __init__(self, initial_equity=10000, csv_path='paper_trades.csv',
-                 equity_csv_path='daily_equity.csv', commission_per_share=0.005,
+                 equity_csv_path='daily_equity.csv', commission_per_share=None,
                  max_open_trades=5):
         self.initial_equity       = initial_equity
+        # commission_per_share is accepted but no longer used — real per-
+        # trade cost now comes from trading_costs.round_trip_commission()
+        # (STT + exchange charges + a flat DP-style charge per sell), which
+        # replaced this flat ₹0.005/share placeholder after it was found to
+        # understate real Indian delivery-equity costs by roughly 100-200x
+        # for this project's typical trade size. Kept as an accepted
+        # (ignored) parameter so any existing call site passing it doesn't
+        # crash — see trading_costs.py to actually change cost assumptions.
         self.commission_per_share = commission_per_share
         self.max_open_trades      = max_open_trades
         self.csv_path             = csv_path
@@ -539,7 +548,7 @@ class PaperTradingManager:
                     exit_triggered, exit_reason, exit_price = True, 'Time Exit',  current_price
 
                 if exit_triggered:
-                    commission = position_size * self.commission_per_share * 2
+                    commission = round_trip_commission(entry_price, exit_price, position_size)
                     gross_pnl  = (exit_price - entry_price) * position_size
                     net_pnl    = gross_pnl - commission
 
@@ -592,7 +601,7 @@ class PaperTradingManager:
             entry_dt      = _parse_date(row['entry_date'])
             hold_days     = (datetime.now() - entry_dt).days if entry_dt else 0
 
-            commission = position_size * self.commission_per_share * 2
+            commission = round_trip_commission(entry_price, exit_price, position_size)
             gross_pnl  = (exit_price - entry_price) * position_size
             net_pnl    = gross_pnl - commission
 
@@ -953,7 +962,7 @@ class PaperTradingManager:
                 elif exit_price >= target:
                     exit_price, reason = target, f'Target Hit (maintenance, {hold_days}d held){reason_suffix}'
 
-                commission = position_size * self.commission_per_share * 2
+                commission = round_trip_commission(entry_price, exit_price, position_size)
                 gross_pnl  = (exit_price - entry_price) * position_size
                 net_pnl    = gross_pnl - commission
 
