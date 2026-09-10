@@ -191,6 +191,88 @@ RISK_PROFILE = {
 }
 
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# RISK CALIBRATIONS
+# ═════════════════════════════════════════════════════════════════════════════
+# Two named calibrations rather than edited-in-place constants, so a change of
+# risk appetite is a one-word diff and the alternative stays readable beside it.
+#
+# 'aggressive' buys trade frequency and per-trade size in the three places
+# where frequency is actually purchasable, and declines to buy it in the one
+# place where it is not:
+#
+#   BOUGHT — context filters (ADX, DI spread, efficiency ratio, extension,
+#            RSI ceiling, turnover floor). These decide how much of the
+#            universe reaches the pattern stage, and on the synthetic funnel
+#            they are the gates eating ~70% of it. Loosening them raises
+#            candidate count roughly linearly.
+#   BOUGHT — the economic floor. max_flat_cost_bps 15 -> 22 drops the minimum
+#            viable notional from ₹13,333 to ₹9,091, which takes the account
+#            from ~3 economically viable slots to ~5. This is the single
+#            largest frequency lever available, and it costs 7 bps a trade.
+#   BOUGHT — ambition. reach_fraction and tgt_mult_momentum are raised, so
+#            winners are allowed to aim further inside the same horizon.
+#   DECLINED — k_stop_max stays at 2.60σ. Tightening the stop cap would raise
+#            achievable R:R arithmetically and look like free frequency, but
+#            it re-creates precisely the defect that produced 26 stop-outs at
+#            -0.85R: a stop inside the noise band. Risk appetite is expressed
+#            through position size and filter width, never by moving the stop
+#            back into the range the stock traverses on an ordinary day.
+#
+# Switch with ACTIVE_CALIBRATION, or call apply_calibration('balanced') before
+# constructing SignalGenerator.
+RISK_CALIBRATIONS = {
+    'balanced': {},                       # the values defined above
+    'aggressive': {
+        # ── Size ──────────────────────────────────────────────────────────
+        'risk_pct_per_trade':    0.055,   # 4.0% -> 5.5% of equity per trade
+        'max_capital_pct':       0.40,    # concentration is how conviction gets expressed
+
+        # ── Frequency: context filters ────────────────────────────────────
+        'min_adx':              14,
+        'min_di_spread':         1.5,
+        'min_efficiency_ratio':  0.10,
+        'max_extension_atr':     3.4,
+        'rsi_hi':               82,       # buying strength rather than fading it
+        'debounce_bars':         2,
+        'min_median_turnover':   3.0e7,   # ₹3cr — opens the midcap/high-beta tail
+
+        # ── Frequency: economics ──────────────────────────────────────────
+        'max_flat_cost_bps':    22.0,     # min notional ₹13,333 -> ₹9,091
+        'max_total_cost_bps':   70.0,
+        'cost_hurdle_mult':      1.20,
+
+        # ── Ambition ──────────────────────────────────────────────────────
+        'min_rr':                1.50,
+        'reach_fraction':        1.25,
+        'tgt_mult_momentum':     3.00,
+        'tgt_mult_reversion':    2.40,
+        'base_quality':          0.42,
+        'edge_tilt':             0.80,    # a larger claimed edge per unit of quality;
+                                           # the honest cost is that a wrong edge_tilt now
+                                           # passes more marginal trades, so calibrate it
+                                           # against realised R as soon as ~40 trades carry
+                                           # a quality_score
+    },
+}
+
+ACTIVE_CALIBRATION = 'aggressive'
+
+
+def apply_calibration(name):
+    """Overlay a named calibration onto RISK_PROFILE in place, so existing
+    importers of RISK_PROFILE see the change without re-importing."""
+    overrides = RISK_CALIBRATIONS.get(name)
+    if overrides is None:
+        raise KeyError(f"unknown calibration '{name}' — have {list(RISK_CALIBRATIONS)}")
+    RISK_PROFILE.update(overrides)
+    logger.info(f"✓ Risk calibration: {name}")
+    return RISK_PROFILE
+
+
+apply_calibration(ACTIVE_CALIBRATION)
+
 # ═════════════════════════════════════════════════════════════════════════════
 # PATTERN PRIORS
 # ═════════════════════════════════════════════════════════════════════════════
