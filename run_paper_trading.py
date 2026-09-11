@@ -569,12 +569,27 @@ def run_eod():
         return
 
     # ── Step 2: fundamentals ─────────────────────────────────────────────────
+    # data_fetcher_free v2 parses screener.in correctly and caches for 7 days,
+    # so this is now real per-company data rather than the identical default
+    # profile every symbol used to receive. Each dict is stamped with its
+    # sector so FundamentalScreener v4 can compare P/E against the sector
+    # median it computes below, instead of against the placeholder 25.
     fundamentals = {}
     for symbol in universe_dfs:
         try:
-            fundamentals[symbol] = bot.get_fundamentals_safe(symbol)
+            f = bot.get_fundamentals_safe(symbol) or {}
         except Exception:
-            fundamentals[symbol] = {}
+            f = {}
+        f['sector'] = SECTOR_MAP.get(symbol, 'UNKNOWN')
+        fundamentals[symbol] = f
+
+    try:
+        bot.signal_gen.fund.calibrate_sector_pe(fundamentals, SECTOR_MAP)
+        measured = sum(1 for f in fundamentals.values() if f.get('fundamentals_measured'))
+        logger.info(f"  Fundamentals measured for {measured}/{len(fundamentals)} symbols "
+                    f"(the rest score neutral rather than inheriting healthy defaults)")
+    except AttributeError:
+        logger.info("  Screener predates v4 — sector P/E calibration skipped")
 
     # ── Step 3: alpha scores, as a ranking tilt rather than a gate ───────────
     # The alpha composite is passed to the allocator, which applies it as a
