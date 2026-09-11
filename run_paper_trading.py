@@ -122,6 +122,7 @@ from notification_handler import NotificationHandler
 from alpha_engine import CompositeAlphaScore
 from orchestrator import TradingOrchestrator
 from market_state import MarketState
+from signal_generator import apply_earnings_constraint
 from signal_generator import SignalGenerator, RISK_PROFILE
 from sentiment_engine import SentimentEngine
 
@@ -466,7 +467,7 @@ def find_replaceable_position(open_trades, new_details, latest_prices, sector_fi
     return None
 
 
-def build_sentiment_enricher(logger_):
+def build_candidate_enricher(logger_, earnings_bars_for):
     """
     Returns a callable the orchestrator applies to its candidate list, or None
     when the sentiment engine is unavailable.
@@ -502,12 +503,34 @@ def build_sentiment_enricher(logger_):
         engine = SentimentEngine()
     except Exception as e:
         logger_.warning(f"  Sentiment engine unavailable ({e}) — candidates proceed unscored")
-        return None
+        engine = None
 
     def enrich(candidates):
         symbols = [c['symbol'] for c in candidates]
         if not symbols:
             return candidates
+
+        # ── Earnings first: it is a hard, dated constraint and it is cheap ────
+        # Checked before sentiment so a candidate already disqualified by an
+        # imminent results date never costs a news fetch. Same reason sentiment
+        # runs on candidates rather than the universe — the expensive lookups
+        # belong behind the cheap filters.
+        survivors = []
+        for c in candidates:
+            bars = earnings_bars_for(c['symbol'])
+            details, ok, why = apply_earnings_constraint(c['details'], bars)
+            if not ok:
+                logger_.info(f"    ✗ {c['symbol']}: {why}")
+                continue
+            c['details'] = details
+            if details.get('earnings_note'):
+                logger_.info(f"    ~ {c['symbol']}: {details['earnings_note']}")
+            survivors.append(c)
+        candidates = survivors
+
+        if engine is None or not candidates:
+            return candidates
+        symbols = [c['symbol'] for c in candidates]
         logger_.info(f"  📰 Sentiment: scoring {len(symbols)} candidates...")
         readings = engine.score_universe(symbols)
         ranks = engine.rank_universe(readings)
@@ -686,6 +709,36 @@ def run_eod():
         except Exception as e:
             logger.warning(f"  Alpha engine unavailable this run ({e}) — allocator ranks on economics alone")
 
+    # ── Step 3b: earnings calendar ───────────────────────────────────────────
+    # Fetched lazily and only where it can change a decision: for the symbols
+    # already held (so a position can be closed on our terms ahead of results)
+    # and, through the enricher, for the few candidates that survived the price
+    # filters. A calendar lookup for every scanned symbol would be 100+ extra
+    # HTTP calls a day for data that matters to perhaps three of them.
+    _earnings_cache = {}
+
+    def bars_to_earnings(symbol):
+        """Trading sessions until the next results date, or None when unknown.
+        None means no constraint — an absent calendar must never become a
+        blackout that empties the universe."""
+        if symbol in _earnings_cache:
+            return _earnings_cache[symbol]
+        sessions = None
+        try:
+            date = bot.fetcher.get_next_earnings_date(symbol)
+            if date is not None:
+                sessions = max(int(np.busday_count(datetime.now().date(), date)), 0)
+        except Exception:
+            sessions = None
+        _earnings_cache[symbol] = sessions
+        return sessions
+
+    held_earnings = {s: bars_to_earnings(s) for s in sorted(held_symbols)}
+    imminent = {s: b for s, b in held_earnings.items() if b is not None and b <= 3}
+    if imminent:
+        logger.info(f"  📆 Results imminent for held positions: {imminent} — "
+                    f"these are closed ahead of the announcement")
+
     # ── Step 4: one orchestrated cycle ───────────────────────────────────────
     orchestrator = TradingOrchestrator(
         paper_mgr, bot.signal_gen, SECTOR_MAP, profile='aggressive',
@@ -695,7 +748,8 @@ def run_eod():
         universe_dfs, nifty_df, vix_df=vix_df, fundamentals=fundamentals,
         alpha_scores=alpha_scores, base_slots=MAX_OPEN_TRADES,
         max_hold_days=MAX_HOLD_DAYS,
-        candidate_enricher=build_sentiment_enricher(logger),
+        candidate_enricher=build_candidate_enricher(logger, bars_to_earnings),
+        earnings_bars=held_earnings,
     )
 
     # ── Step 5: equity log and report ────────────────────────────────────────
