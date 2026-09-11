@@ -126,6 +126,17 @@ ACTIVE_PROFILE = 'aggressive'
 # Raise ALPHA_TILT once a tier breakdown on >=100 trades shows separation.
 ALPHA_TILT = 0.15
 
+# Sentiment enters the same way and for the same reason, with its own bound.
+# The two are kept separate rather than summed into one "score" because they
+# fail independently: alpha is a price/volume composite that is always
+# computable, sentiment is a news read that is frequently absent for a midcap
+# and must be able to contribute nothing without dragging a candidate toward
+# the middle. A symbol with no usable headlines gets no tilt at all, not a
+# neutral 50 — the distinction between "average news" and "no news" matters,
+# and sentiment_engine's ranker already excludes zero-confidence symbols from
+# its percentiles for exactly this reason.
+SENTIMENT_TILT = 0.12
+
 
 def get_profile(name=None):
     return ALLOCATOR_PROFILES[name or ACTIVE_PROFILE]
@@ -359,11 +370,14 @@ class PortfolioAllocator:
             if econ is None:
                 ranked.append({**c, 'size': 0, 'econ': None, 'score': -1e9, 'note': 'no economics'})
                 continue
-            alpha = c.get('alpha_score')
             tilt = 1.0
+            alpha = c.get('alpha_score')
             if alpha is not None:
                 # alpha scores run 0-100; centre at 55, the project's own neutral placeholder
-                tilt = 1.0 + ALPHA_TILT * float(np.clip((float(alpha) - 55.0) / 45.0, -1.0, 1.0))
+                tilt *= 1.0 + ALPHA_TILT * float(np.clip((float(alpha) - 55.0) / 45.0, -1.0, 1.0))
+            sent = c.get('sentiment_percentile')
+            if sent is not None:
+                tilt *= 1.0 + SENTIMENT_TILT * float(np.clip((float(sent) - 50.0) / 50.0, -1.0, 1.0))
             ranked.append({**c, 'size': size, 'econ': econ,
                            'score': econ['roc_per_day'] * tilt, 'note': note})
         return sorted(ranked, key=lambda r: -r['score'])
