@@ -101,6 +101,7 @@ ALLOCATOR_PROFILES = {
         'max_correlation':       0.75,
         'max_per_sector':        3,
         'min_edge_roc_per_day':  0.0006, # ~0.06% of deployed capital per day, net
+        'settlement_days':       1,
     },
     'aggressive': {
         'kelly_lambda':          0.35,
@@ -113,6 +114,7 @@ ALLOCATOR_PROFILES = {
         'max_correlation':       0.82,   # concentration in one theme is a deliberate choice here
         'max_per_sector':        4,
         'min_edge_roc_per_day':  0.0004,
+        'settlement_days':       1,
     },
 }
 
@@ -317,10 +319,12 @@ class PortfolioAllocator:
         return float(equity) * self.P['max_portfolio_heat'] * throttle, dd, throttle
 
     # ─────────────────────────────────────────────────────────────────────────
-    def size_candidate(self, details, equity, cash_available, alpha_score=None):
+    def size_candidate(self, details, equity, cash_available=None, alpha_score=None):
         """
-        Stake from edge, then clip by concentration, cash and the economic
+        Intrinsic stake from edge, clipped by concentration and the economic
         floor. Returns (size, note) with size 0 when no viable stake exists.
+        cash_available is accepted for signature compatibility and is applied
+        later, in _finalize — see the note inside.
 
         Order matters. Kelly first, because a negative fraction should decline
         the trade outright rather than be clipped into a small position — a
@@ -341,11 +345,17 @@ class PortfolioAllocator:
         f_used = min(self.P['kelly_lambda'] * f_star, self.P['max_risk_pct'])
         size_by_edge = (equity * f_used) / risk_ps
         size_by_conc = (equity * self.P['max_capital_pct']) / entry
-        size_by_cash = max(cash_available, 0.0) / entry
 
-        size = int(min(size_by_edge, size_by_conc, size_by_cash))
-        binding = ('edge/Kelly' if size_by_edge <= min(size_by_conc, size_by_cash)
-                   else 'concentration cap' if size_by_conc <= size_by_cash else 'cash')
+        # Deliberately NOT clipped by today's cash here. This is the INTRINSIC
+        # stake — what the opportunity deserves — and ranking has to be
+        # independent of the balance, or a strong candidate arriving on a
+        # fully-invested day is scored as weak and never competes for a slot
+        # at all. Under T+1 settlement that failure is total: cash is short on
+        # exactly the days an eviction would free some, so every swap would be
+        # ruled out before its merits were examined. Cash is applied in
+        # _finalize, after the switching decision has been made.
+        size = int(min(size_by_edge, size_by_conc))
+        binding = 'edge/Kelly' if size_by_edge <= size_by_conc else 'concentration cap'
 
         min_notional = float(details.get('min_notional_inr', 0) or 0)
         if size * entry < min_notional:
@@ -470,14 +480,44 @@ class PortfolioAllocator:
                     continue
                 # Sale proceeds fund the replacement; they are not free capital
                 # until the exit cost is paid out of them.
-                proceeds = victim['econ']['notional'] - victim['econ']['exit_cost']
+                # Indian cash equity settles T+1: the rupees from today's sale
+                # are not available to fund today's purchase. Modelling them as
+                # instant made every swap look fundable and would, live, produce
+                # either a rejected order or unintended margin usage — and it
+                # quietly flattered the paper record by letting the book run
+                # more positions than settled capital could support.
+                #
+                # The eviction still executes on its merits: a broken incumbent
+                # should be out regardless of what replaces it. The replacement
+                # simply waits for the cash, and tomorrow's scan re-evaluates
+                # the candidate on tomorrow's evidence — which is better than
+                # committing today to an order that fills a day later anyway.
+                proceeds = (0.0 if P.get('settlement_days', 1) > 0
+                            else victim['econ']['notional'] - victim['econ']['exit_cost'])
                 reason_prefix = f"displaces {victim['symbol']} — {victim['rationale']}"
 
             size, econ, risk_rupees, ok, why = self._finalize(
                 details, r['size'], econ, cash + proceeds, heat_room + (
                     victim['econ']['risk_rupees'] if victim else 0.0))
             if not ok:
-                plan['declined'].append((symbol, why))
+                if victim is not None and P.get('settlement_days', 1) > 0:
+                    # The swap was justified but only settled cash can fund it.
+                    # Free the slot today, buy tomorrow.
+                    plan['evictions'].append(victim)
+                    live_incumbents = [i for i in live_incumbents
+                                       if i['symbol'] != victim['symbol']]
+                    held_symbols.discard(victim['symbol'])
+                    v_sector = self.sector_map.get(victim['symbol'], victim['symbol'])
+                    sector_counts[v_sector] = max(sector_counts.get(v_sector, 1) - 1, 0)
+                    heat_room += victim['econ']['risk_rupees']
+                    plan['pending_settlement'] = round(
+                        plan.get('pending_settlement', 0.0)
+                        + victim['econ']['notional'] - victim['econ']['exit_cost'], 2)
+                    plan['declined'].append(
+                        (symbol, f"{victim['symbol']} evicted; entry waits on T+1 settlement "
+                                 f"(₹{victim['econ']['notional']:,.0f} unsettled)"))
+                else:
+                    plan['declined'].append((symbol, why))
                 continue
 
             if victim is not None:
@@ -500,6 +540,7 @@ class PortfolioAllocator:
             sector_counts[sector] = sector_counts.get(sector, 0) + 1
 
         plan['diagnostics']['cash_remaining'] = round(cash, 2)
+        plan['diagnostics']['pending_settlement'] = plan.get('pending_settlement', 0.0)
         plan['diagnostics']['heat_room_remaining'] = round(heat_room, 2)
         return plan
 
@@ -637,6 +678,9 @@ def print_plan(plan):
           f"heat throttle {d['heat_throttle']:.2f}")
     print(f"  Heat  ₹{d['open_heat']:,.0f} open of ₹{d['heat_cap']:,.0f} cap "
           f"(₹{d['heat_room']:,.0f} room) | slots {d['slots_used']}/{d['max_slots']}")
+    if d.get('pending_settlement'):
+        print(f"  ₹{d['pending_settlement']:,.0f} from today's sales settles T+1 — "
+              f"available to deploy tomorrow")
     if plan['evictions']:
         print("\n  ── Evictions ──")
         for e in plan['evictions']:
