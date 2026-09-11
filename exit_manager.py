@@ -106,6 +106,7 @@ EXIT_PROFILES = {
         'stagnation_checkpoint':   0.50,   # ...as a fraction of its planned horizon
         'max_hold_hard_cap':       30,
         'min_hold_before_decay':    3,     # let the trade breathe before judging its health
+        'earnings_exit_buffer':     1,     # be flat this many sessions before results
     },
     'aggressive': {
         'chandelier_tiers': [
@@ -120,6 +121,7 @@ EXIT_PROFILES = {
         'stagnation_checkpoint':   0.40,   # ...judged sooner: idle capital is the enemy
         'max_hold_hard_cap':       25,
         'min_hold_before_decay':    3,
+        'earnings_exit_buffer':     1,
     },
 }
 
@@ -376,7 +378,8 @@ class ExitEngine:
         self.P = get_profile(profile)
         self.profile_name = profile or ACTIVE_PROFILE
 
-    def evaluate(self, trade, bars=None, current_price=None, bars_held=None):
+    def evaluate(self, trade, bars=None, current_price=None, bars_held=None,
+                 bars_to_earnings=None):
         """
         trade: dict/Series with entry_price, stop_loss, initial_stop_loss,
                target_price, position_size, and optionally time_exit_bars,
@@ -415,6 +418,17 @@ class ExitEngine:
                 return {**result, 'action': 'EXIT', 'exit_price': round(stop, 2), 'exit_reason': 'SL Hit'}
             if price >= target:
                 return {**result, 'action': 'EXIT', 'exit_price': round(target, 2), 'exit_reason': 'Target Hit'}
+
+        # ── 1b. Results announcement ─────────────────────────────────────────
+        # Ranked directly after the hard levels and ahead of everything else,
+        # because unlike a decaying thesis or an expiring clock this is a dated
+        # event with a known arrival. A stop placed 2.3 sigma below price offers
+        # no protection against a 6-12% results gap — the fill happens at the
+        # open, wherever that is. The position is closed on the signal
+        # generator's terms rather than surrendered to the announcement.
+        if bars_to_earnings is not None and 0 <= bars_to_earnings <= self.P.get('earnings_exit_buffer', 1):
+            return {**result, 'action': 'EXIT', 'exit_price': round(price, 2),
+                    'exit_reason': f'Pre-Earnings Exit (results in {bars_to_earnings} session(s))'}
 
         # ── 2. Thesis health ─────────────────────────────────────────────────
         health = PositionHealth.evaluate(bars, entry_adx=trade.get('entry_adx'))
