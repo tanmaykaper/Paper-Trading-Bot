@@ -40,6 +40,7 @@ import json
 import logging
 import os
 
+import numpy as np
 import pandas as pd
 
 from market_state import MarketState, BreadthPanel, print_state
@@ -61,6 +62,24 @@ STATE_JSON = 'orchestrator_state.json'
 EXTRA_COLUMNS = ['quality_score', 'p_win_est', 'time_exit_bars', 'entry_adx',
                  'highest_high', 'health_signals_at_exit', 'entry_slippage_pct',
                  'market_state_at_entry']
+
+
+def _assign(df, mask, key, value):
+    """
+    Write a value into a column that may still be an all-NaN float64 block.
+
+    pandas raises rather than silently upcasting when a string lands in a float
+    column, and an exception here aborts the whole daily run — which is exactly
+    what happened in the first walk-forward: every bar that produced a fill
+    threw on the market_state_at_entry write, so no extra column was ever
+    persisted and the sample collapsed. Coercing to object first is the fix,
+    and it is applied in one place so both patch paths share it.
+    """
+    if key not in df.columns:
+        df[key] = pd.NA
+    if not isinstance(value, (int, float, np.integer, np.floating)) or isinstance(value, bool):
+        df[key] = df[key].astype(object)
+    df.loc[mask, key] = value
 
 
 class TradingOrchestrator:
@@ -291,7 +310,7 @@ class TradingOrchestrator:
             m = df['trade_id'] == tid
             for k, v in fields.items():
                 if v is not None:
-                    df.loc[m, k] = v
+                    _assign(df, m, k, v)
         df.to_csv(self.trades_csv, index=False)
 
     def _patch_latest(self, symbol, fields):
@@ -311,7 +330,7 @@ class TradingOrchestrator:
             m = m & (df['trade_group_id'] == latest_group)
         for k, v in fields.items():
             if v is not None:
-                df.loc[m, k] = v
+                _assign(df, m, k, v)
         df.to_csv(self.trades_csv, index=False)
 
     def _returns_frame(self, universe_dfs):
