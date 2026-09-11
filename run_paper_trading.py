@@ -120,6 +120,8 @@ from swing_trading_bot import SwingTradingBot, SECTOR_MAP, MAX_SECTOR_EXPOSURE, 
 from paper_trading_manager import PaperTradingManager
 from notification_handler import NotificationHandler
 from alpha_engine import CompositeAlphaScore
+from orchestrator import TradingOrchestrator
+from market_state import MarketState
 from signal_generator import SignalGenerator, RISK_PROFILE
 from sentiment_engine import SentimentEngine
 
@@ -142,7 +144,21 @@ INITIAL_EQUITY  = 50_000
 # (4+4+2) instead of effectively 2 (4+1 out of 5) — slightly MORE forced
 # diversification than before, not less, so no separate tuning needed there.
 MAX_OPEN_TRADES = 10
-MAX_HOLD_DAYS   = 15
+# Raised from 15. The barrier geometry in signal_generator v4 bounds achievable
+# R:R at reach_fraction*sqrt(H)/k_stop_max; at H=15 that ceiling is 1.64 against
+# a 1.50 floor, which squeezes structural stops toward the volatility floor and
+# leaves almost no room for a 2:1 trade. At 18 the ceiling is 1.80, at 20 it is
+# 1.89. Realised time-exits in paper_trades.csv averaged 23.8 days, so the old
+# clock was also truncating trades that were still working. exit_manager now
+# enforces a PER-TRADE horizon (time_exit_bars) inside this outer cap.
+MAX_HOLD_DAYS   = 18
+
+# Alpha is a ranking input, not an admission gate. Its own tier breakdown shows
+# no separation on the sample so far (Tier 2 mean -0.086R vs Tier 3 -0.072R,
+# Tier 3 winning more often, n=41), so portfolio_allocator applies it as a
+# bounded +/-7.5% tie-break and the economics decide participation. Set False to
+# drop it entirely; the allocator ranks on forward return per slot-day either way.
+USE_ALPHA_ENGINE = True
 
 TRADES_CSV = 'paper_trades.csv'
 EQUITY_CSV = 'daily_equity.csv'
@@ -451,8 +467,54 @@ def find_replaceable_position(open_trades, new_details, latest_prices, sector_fi
 
 
 def run_eod():
+    """
+    v11 — DAILY RUN, DELEGATED TO orchestrator.TradingOrchestrator
+    ─────────────────────────────────────────────────────────────────────────
+    v10's pipeline made every decision inline: it scanned, scored, sized,
+    sector-capped, replaced positions, applied trailing stops and closed
+    trades across ~500 lines in one function. Each of those responsibilities
+    now lives in a module that can be tested on its own, and this function's
+    job is reduced to the two things a runner should actually do — assemble
+    the data, and report what happened.
+    
+    What moved, and where:
+    
+      market_state.MarketState      today's exposure, slot count and the
+                                    defensive clamp. Replaces the static
+                                    BULL/NEUTRAL/BEAR call, which changed
+                                    state roughly four times a year and could
+                                    not see a five-day risk-off event — the
+                                    condition that produced three separate
+                                    weeks at a 0% win rate.
+      signal_generator v4           volatility- and structure-adaptive stops,
+                                    horizon-feasible targets, the cost floor.
+      entry_execution               plans rest overnight and fill against the
+                                    NEXT session, at the price the market
+                                    actually offered. v10 booked entries at a
+                                    close nobody could transact at.
+      portfolio_allocator           slot competition on forward return per
+                                    slot-day, fractional Kelly sizing, and a
+                                    switching hurdle in rupees. Replaces
+                                    find_replaceable_position, REPLACE_SCORE_
+                                    MULTIPLE, PROTECT_PROFIT_PCT,
+                                    PROTECT_PROGRESS_PCT and FAIR_SHARE_FLEX.
+      exit_manager.ExitEngine       chandelier trail, momentum-decay exit,
+                                    per-trade horizon, stagnation flag, and
+                                    realistic fills. Replaces the separate
+                                    apply_trailing_stops / update_trades pair,
+                                    whose split meant the trail could ratchet
+                                    a stop the time exit then overrode with no
+                                    coordination between them.
+      calibration                   learns P(win | quality) from closed trades
+                                    and feeds it back to the EV gate and Kelly.
+    
+    The one data change this requires: universe_dfs must now include HELD
+    symbols. v10 skipped them (`if symbol in held_symbols: continue`), leaving
+    open positions with a last price and nothing else — the decay check and the
+    chandelier both need bars.
+    """
     logger.info("\n" + "=" * 70)
-    logger.info(f"📅 NSE PAPER TRADING BOT — {datetime.now().strftime('%Y-%m-%d %H:%M IST')}")
+    logger.info(f"📅 NSE PAPER TRADING BOT v11 — {datetime.now().strftime('%Y-%m-%d %H:%M IST')}")
     logger.info("=" * 70)
 
     paper_mgr = PaperTradingManager(
@@ -461,547 +523,127 @@ def run_eod():
         equity_csv_path=EQUITY_CSV,
         max_open_trades=MAX_OPEN_TRADES,
     )
+    bot = SwingTradingBot(send_emails=False, initial_equity=INITIAL_EQUITY,
+                          max_open_trades=MAX_OPEN_TRADES, max_hold_days=MAX_HOLD_DAYS)
 
-    bot = SwingTradingBot(
-        send_emails=False,
-        initial_equity=INITIAL_EQUITY,
-        max_open_trades=MAX_OPEN_TRADES,
+    # ── Step 1: index, volatility and the scan universe ──────────────────────
+    # Held symbols are unioned into the fetch list rather than skipped. This is
+    # the single wiring change the new exit logic depends on.
+    held_symbols = set()
+    try:
+        open_df = paper_mgr.get_open_trades()
+        if open_df is not None and len(open_df):
+            held_symbols = set(open_df['symbol'].astype(str))
+    except Exception:
+        pass
+
+    fetch_list = list(dict.fromkeys(list(SCAN_UNIVERSE) + sorted(held_symbols)))
+    logger.info(f"\n📡 Fetching {len(fetch_list)} symbols "
+                f"({len(held_symbols)} held, {len(SCAN_UNIVERSE)} scanned)...")
+
+    nifty_df = bot.fetcher.get_historical_data('^NSEI', days=400, min_bars=200)
+    vix_df = bot.fetcher.get_historical_data('^INDIAVIX', days=180, min_bars=30)
+    if vix_df is None:
+        logger.info("  India VIX unavailable this run — volatility scores from index realised vol alone")
+
+    universe_dfs = {}
+    for symbol in fetch_list:
+        try:
+            df = bot.fetcher.get_historical_data(symbol, days=260, min_bars=80)
+            if df is not None:
+                universe_dfs[symbol] = df
+        except Exception as e:
+            logger.warning(f"  {symbol}: fetch failed ({e})")
+
+    missing_held = held_symbols - set(universe_dfs)
+    if missing_held:
+        # Named explicitly rather than counted: a held position with no bars is
+        # a position the exit engine cannot evaluate today, which is worth
+        # seeing in the log rather than inferring from a silent gap.
+        logger.warning(f"  ⚠ no data for held positions: {sorted(missing_held)} — "
+                       f"their exits are deferred to the next run")
+
+    if len(universe_dfs) < 20:
+        logger.error(f"✗ Only {len(universe_dfs)} symbols resolved — aborting rather than "
+                     f"trading on a universe too thin to measure breadth against")
+        return
+
+    # ── Step 2: fundamentals ─────────────────────────────────────────────────
+    fundamentals = {}
+    for symbol in universe_dfs:
+        try:
+            fundamentals[symbol] = bot.get_fundamentals_safe(symbol)
+        except Exception:
+            fundamentals[symbol] = {}
+
+    # ── Step 3: alpha scores, as a ranking tilt rather than a gate ───────────
+    # The alpha composite is passed to the allocator, which applies it as a
+    # bounded tie-break (ALPHA_TILT, +/-7.5%) instead of the hard
+    # MIN_ALPHA_SCORE_TO_TRADE cut v10 used. That cut was spending trades on a
+    # score whose own tier breakdown showed no separation: Tier 2 mean -0.086R
+    # against Tier 3 -0.072R, with Tier 3 winning more often (n=41). Until a
+    # larger sample says otherwise, it informs ordering and does not decide
+    # participation.
+    alpha_scores = {}
+    if USE_ALPHA_ENGINE:
+        try:
+            alpha_scorer = CompositeAlphaScore()
+            regime_result = alpha_scorer.regime_detector.classify(nifty_df)
+            factor_values = {s: alpha_scorer.factor_engine.compute_all(d)
+                             for s, d in universe_dfs.items()}
+            factor_ranks = alpha_scorer.ranker.rank_universe(factor_values, sector_map=SECTOR_MAP)
+            for s in universe_dfs:
+                r = alpha_scorer.score_symbol(s, factor_ranks.get(s, {}), regime_result)
+                if r.get('composite_score') is not None:
+                    alpha_scores[s] = r['composite_score']
+            logger.info(f"  Alpha scored {len(alpha_scores)} symbols "
+                        f"(regime: {regime_result.get('regime')})")
+        except Exception as e:
+            logger.warning(f"  Alpha engine unavailable this run ({e}) — allocator ranks on economics alone")
+
+    # ── Step 4: one orchestrated cycle ───────────────────────────────────────
+    orchestrator = TradingOrchestrator(
+        paper_mgr, bot.signal_gen, SECTOR_MAP, profile='aggressive',
+        trades_csv=TRADES_CSV,
+    )
+    report = orchestrator.run(
+        universe_dfs, nifty_df, vix_df=vix_df, fundamentals=fundamentals,
+        alpha_scores=alpha_scores, base_slots=MAX_OPEN_TRADES,
         max_hold_days=MAX_HOLD_DAYS,
     )
 
-    # Separate from bot.notifier (which is only for trade-signal emails) —
-    # this fires regardless of that setting whenever email creds exist,
-    # because system-health failures matter even if you don't want signal spam.
-    alert_notifier = NotificationHandler(use_email=True, use_sms=False)
-
-    held_symbols  = get_all_held_symbols(TRADES_CSV)
-    price_symbols = list(set(SCAN_UNIVERSE) | held_symbols)
-    logger.info(f"\n  Held positions : {sorted(held_symbols) or 'none'}")
-    logger.info(f"  Price fetch    : {len(price_symbols)} symbols")
-
-    # ── Step 1: Bulk price fetch ──────────────────────────────────────────────
-    logger.info("\n[Step 1] Fetching latest prices (bulk, with retries)...")
-    latest_prices = bot.fetcher.get_ltp_bulk(price_symbols)
-    logger.info(f"  Got prices for {len(latest_prices)}/{len(price_symbols)} symbols")
-
-    missing_held = held_symbols - set(latest_prices.keys())
-    if missing_held:
-        logger.warning(f"  ⚠️ Still no price for held symbols after retries: {missing_held}")
-
-    # ── Step 2: Trailing stops, then exit checks ─────────────────────────────
-    # Trailing stops applied FIRST and deliberately separate from the exit
-    # check that follows — a position ratcheted up this run should be
-    # evaluated against its NEW stop immediately, not next run.
-    logger.info("\n[Step 2] Applying trailing stops...")
-    n_trailed = paper_mgr.apply_trailing_stops(latest_prices)
-    logger.info(f"  Stops raised on {n_trailed} position(s)")
-
-    logger.info("\n[Step 2b] Checking open trades for exits...")
-    trades_closed = paper_mgr.update_trades(latest_prices, max_hold_days=MAX_HOLD_DAYS)
-    logger.info(f"  Trades closed this run: {trades_closed}")
-
-    # Safety net: anything still open past its hold window despite the above
-    # (i.e. price genuinely unavailable even after retries) gets force-closed
-    # rather than left to rot silently for months, as happened before.
-    stale_closed = paper_mgr.force_close_stale(latest_prices, max_hold_days=MAX_HOLD_DAYS)
-    if stale_closed:
-        logger.warning(f"  ⚠️ force_close_stale cleared {len(stale_closed)} position(s) that update_trades missed")
-        trades_closed += len(stale_closed)
-
-    # ── Step 3: Health check — never let a bad run pass silently again ───────
-    logger.info("\n[Step 3] Price-fetch health check...")
-    health = paper_mgr.price_fetch_health_check(latest_prices)
-    if not health['healthy']:
-        alert_notifier.send_alert(
-            subject="Price fetch incomplete — exit checks may be skipped",
-            body=(
-                f"{len(health['missing_symbols'])}/{health['held_positions']} open positions "
-                f"had no live price this run: {health['missing_symbols']}.\n\n"
-                f"If this repeats for several consecutive runs, price fetching is broken "
-                f"and positions can silently stay open indefinitely — check yfinance/network "
-                f"status and this bot's logs."
-            ),
-        )
-
-    # ── Step 4: Portfolio equity & risk state ─────────────────────────────────
-    # Computed AFTER exits so it reflects today's true state, and used as the
-    # basis for position sizing instead of paper_mgr.free_cash (see header
-    # comment — sizing off free_cash under-sizes later trades in a run by up
-    # to ~90% as slots fill, purely as an accounting artifact).
-    logger.info("\n[Step 4] Computing portfolio equity & risk state...")
-    summary      = paper_mgr.get_summary(latest_prices)
-    total_equity = summary.get('total_portfolio_value', INITIAL_EQUITY)
-    peak_equity  = max(get_peak_equity(EQUITY_CSV, floor=INITIAL_EQUITY), total_equity)
-    drawdown_pct = (peak_equity - total_equity) / peak_equity if peak_equity > 0 else 0.0
-
-    current_agg_risk   = paper_mgr.get_aggregate_open_risk()
-    portfolio_risk_pct = (current_agg_risk / total_equity) if total_equity > 0 else 0.0
-    sector_counts       = {s: len(syms) for s, syms in
-                            paper_mgr.get_open_positions_by_sector(SECTOR_MAP).items()}
-
-    logger.info(f"  Total equity          : ₹{total_equity:,.2f}  (peak: ₹{peak_equity:,.2f})")
-    logger.info(f"  Drawdown from peak     : {drawdown_pct*100:.1f}%  (circuit breaker at {LIVE_MAX_DRAWDOWN*100:.0f}%)")
-    logger.info(f"  Aggregate open risk    : ₹{current_agg_risk:,.2f}  ({portfolio_risk_pct*100:.1f}% of equity, cap {MAX_PORTFOLIO_RISK_PCT*100:.0f}%)")
-    logger.info(f"  Sector exposure        : {sector_counts or 'none'}  (cap {LIVE_MAX_SECTOR_EXPOSURE}/sector)")
-
-    circuit_breaker_active = drawdown_pct >= LIVE_MAX_DRAWDOWN
-    if circuit_breaker_active:
-        logger.warning(
-            f"  🛑 DRAWDOWN CIRCUIT BREAKER ACTIVE: equity is down {drawdown_pct*100:.1f}% "
-            f"from its peak (₹{peak_equity:,.2f} → ₹{total_equity:,.2f}), ≥ the "
-            f"{LIVE_MAX_DRAWDOWN*100:.0f}% halt threshold. Skipping new entries this run "
-            f"— existing positions still get their normal exit checks."
-        )
-        alert_notifier.send_alert(
-            subject="Drawdown circuit breaker active — new entries paused",
-            body=(
-                f"Portfolio equity is down {drawdown_pct*100:.1f}% from its peak "
-                f"(₹{peak_equity:,.2f} → ₹{total_equity:,.2f}). New trade entries are "
-                f"paused until this recovers. Existing positions continue to be "
-                f"monitored and will still exit normally on stop-loss/target/time."
-            ),
-        )
-
-    # ── Step 5: Market regime + cross-sectional alpha engine prep ─────────────
-    # Fetches Nifty ONCE and derives two independent regime reads from the
-    # same data: the existing simple BULL/NEUTRAL/BEAR classifier (unchanged
-    # — still what signal_generator.py's own pattern logic uses internally,
-    # not touched by this integration) AND alpha_engine's richer 5-state
-    # regime (STRONG_UPTREND/CHOPPY_RANGE/HIGH_VOL_STRESS/etc), used only for
-    # the new cross-sectional scoring layer below. Two classifiers, two
-    # different jobs — not redundant, and deliberately not consolidated into
-    # one, to avoid risking already-tested signal_generator behaviour for
-    # the sake of this integration.
-    logger.info("\n[Step 5] Checking market regime + preparing cross-sectional alpha scoring...")
-
-    alpha_scorer  = CompositeAlphaScore()
-    alpha_active  = False        # flips True only if every alpha-specific step below succeeds
-    factor_ranks  = {}
-    pattern_weights = {}
-    regime_result = {'regime': 'WEAK_TREND', 'tilts': {}, 'confidence': 0.0}   # neutral default
-
-    nifty_df = bot.fetcher.get_historical_data('^NSEI', days=300, min_bars=200)
-    regime   = SignalGenerator.classify_market_regime(nifty_df)   # unchanged, feeds signal_generator as before
-    logger.info(f"  Regime (simple, drives entry patterns) : {regime}")
-
-    # Bulk-fetch the unheld scan universe ONCE into a dict — this REPLACES
-    # the old per-symbol fetch that used to happen inside the loop below, it
-    # doesn't add new fetches (every one of these symbols was already being
-    # fetched one at a time regardless of whether it ended up a BUY or
-    # HOLD). This fetch is UNCONDITIONAL, deliberately outside the alpha
-    # try/except below — signal_generator needs this data regardless of
-    # whether the alpha scoring layer on top of it succeeds. If the alpha
-    # engine fails, trading should fall back to "no conviction layer", not
-    # silently stop scanning entirely.
-    universe_dfs = {}
-    logger.info(f"  Bulk-fetching history for {len(SCAN_UNIVERSE) - len(held_symbols)} unheld symbols...")
-    for symbol in SCAN_UNIVERSE:
-        if symbol in held_symbols:
-            continue
-        df = bot.fetcher.get_historical_data(symbol, days=200, min_bars=50)
-        if df is not None:
-            universe_dfs[symbol] = df
-    logger.info(f"  Got usable history for {len(universe_dfs)}/{len(SCAN_UNIVERSE) - len(held_symbols)} symbols")
-
+    # ── Step 5: equity log and report ────────────────────────────────────────
+    latest_prices = {s: float(d['close'].iloc[-1]) for s, d in universe_dfs.items()}
     try:
-        if nifty_df is None:
-            raise ValueError("no Nifty data — cannot run regime-aware alpha scoring this run")
-        if len(universe_dfs) < 2:
-            raise ValueError(f"only {len(universe_dfs)} symbols have usable data — too few to rank cross-sectionally")
-
-        regime_result = alpha_scorer.regime_detector.classify(nifty_df)
-        logger.info(f"  Regime (rich, drives alpha weighting)  : {regime_result['regime']} "
-                    f"(confidence {regime_result['confidence']})")
-
-        factor_values = {s: alpha_scorer.factor_engine.compute_all(df) for s, df in universe_dfs.items()}
-        factor_ranks  = alpha_scorer.ranker.rank_universe(factor_values, sector_map=SECTOR_MAP)
-
-        closed_trades    = paper_mgr.get_closed_trades()
-        previous_weights = alpha_scorer.calibrator.load_weights(PATTERN_WEIGHTS_CSV)
-        if len(closed_trades) > 0:
-            pattern_weights = alpha_scorer.calibrator.calibrate_weights(closed_trades, previous_weights=previous_weights)
-            if pattern_weights:
-                alpha_scorer.calibrator.save_weights(PATTERN_WEIGHTS_CSV, pattern_weights)
-                logger.info(f"  Pattern weights recalibrated from {len(closed_trades)} closed trades: {pattern_weights}")
-        else:
-            pattern_weights = previous_weights
-            logger.info("  No closed trades yet — pattern weights stay at their last calibrated values (or neutral)")
-
-        alpha_active = True
-
+        paper_mgr.log_daily_equity(latest_prices)
     except Exception as e:
-        logger.error(
-            f"  ⚠️ Alpha engine scoring unavailable this run ({e}) — falling back to "
-            f"signal_generator's own BUY/HOLD decisions with no alpha gating, same as "
-            f"before this integration. Trading continues normally on the {len(universe_dfs)} "
-            f"symbols already fetched above; only the extra conviction layer is skipped."
-        )
+        logger.warning(f"  equity log failed ({e})")
 
-    # ── Step 6: Scan for new signals (alpha-scored, risk-budgeted,
-    #            sector-capped, with position replacement) ───────────────────
-    open_count  = paper_mgr.get_open_symbol_count()   # distinct SYMBOLS, not rows — a
-    slots_free  = MAX_OPEN_TRADES - open_count          # tranched position is still one slot
-
-    logger.info(f"\n[Step 6] Scanning {len(SCAN_UNIVERSE)} symbols for new signals...")
-    logger.info(f"  Open: {open_count}/{MAX_OPEN_TRADES} | Slots free: {slots_free} | Free cash: ₹{paper_mgr.free_cash:,.2f}"
-                f" | Alpha scoring: {'ACTIVE' if alpha_active else 'inactive (fallback mode)'}")
-
-    new_trades    = 0
-    replacements  = 0
-    skipped_risk  = 0
-    skipped_sector = 0
-    skipped_alpha  = 0
-    skipped_sentiment = 0
-    signals_found = []
-
-    if circuit_breaker_active:
-        logger.info("  Skipping scan entirely — drawdown circuit breaker is active")
-    elif paper_mgr.free_cash < 500:
-        logger.info(f"  Free cash ₹{paper_mgr.free_cash:.0f} too low — skipping scan")
-    else:
-        # ── Step 6a: technical BUY candidates only (no scoring yet) ─────────
-        # Split out from the scoring/execution loop specifically so sentiment
-        # fetching (Step 6b, right below) knows the full candidate list
-        # before it fetches anything — needed both to rank sentiment
-        # cross-sectionally against today's actual candidates (not the whole
-        # universe) and to avoid fetching news for symbols that never even
-        # produced a signal.
-        buy_candidates = []   # [(symbol, details), ...]
-        for symbol, df in universe_dfs.items():
-            try:
-                fund = bot.get_fundamentals_safe(symbol)
-                sig, details = bot.signal_gen.generate_signal(
-                    df, symbol, fund,
-                    current_equity=total_equity,   # true equity, not free_cash — see header
-                    market_regime=regime,
-                )
-                if sig != 'BUY':
-                    continue
-
-                # Defensive: compute risk directly from entry/stop/size rather
-                # than trusting a pre-baked 'risk' key in details — keeps this
-                # robust even if the signal generator's return schema changes.
-                risk_per_share = details['entry_price'] - details['stop_loss']
-                details['risk'] = round(details.get('position_size', 0) * risk_per_share, 2)
-                details.setdefault('reward', round(
-                    details.get('position_size', 0) * (details['target_price'] - details['entry_price']), 2))
-
-                buy_candidates.append((symbol, details))
-            except Exception as e:
-                logger.error(f"  Error scanning {symbol}: {e}")
-
-        logger.info(f"  Step 6a: {len(buy_candidates)} technical BUY signal(s) found")
-
-        # ── Step 6b: sentiment fetch + cross-sectional rank, candidates only ─
-        sentiment_engine = SentimentEngine()
-        sentiment_active  = False
-        sentiment_readings = {}
-        sentiment_ranks     = {}
-        if buy_candidates:
-            try:
-                candidate_symbols = [s for s, _ in buy_candidates]
-                sentiment_readings = sentiment_engine.score_universe(candidate_symbols)
-                sentiment_ranks    = sentiment_engine.rank_universe(sentiment_readings)
-                for symbol in candidate_symbols:
-                    if symbol in sentiment_ranks:
-                        factor_ranks.setdefault(symbol, {})['sentiment'] = sentiment_ranks[symbol]
-                sentiment_active = True
-                n_scored = sum(1 for r in sentiment_readings.values() if r.get('reason') is None)
-                logger.info(f"  Step 6b: sentiment scored for {n_scored}/{len(candidate_symbols)} "
-                            f"candidates (others had no usable recent news — treated as neutral/no opinion)")
-            except Exception as e:
-                logger.error(
-                    f"  ⚠️ Sentiment scoring unavailable this run ({e}) — proceeding without "
-                    f"the sentiment factor and veto gate, same as a run before this integration existed."
-                )
-
-        # ── Step 6c: alpha score, sentiment veto, risk budget, sector cap,
-        #             replacement, and actually opening trades ───────────────
-        for symbol, details in buy_candidates:
-            try:
-                # risk_per_share was already used to compute details['risk']
-                # back in Step 6a; recomputed here (Step 6c is a separate
-                # loop over the same candidates) purely for the tier-size and
-                # risk-budget resizing math below — same formula, not a
-                # different number.
-                risk_per_share = details['entry_price'] - details['stop_loss']
-
-                # ── Alpha engine conviction scoring (only if it's active this
-                #    run — see Step 5). Gates whether a technically-valid
-                #    signal is actually worth taking, and scales its size by
-                #    conviction tier. If alpha scoring isn't active, every
-                #    technical BUY signal proceeds exactly as it did before
-                #    this integration — no new restriction gets silently
-                #    added by a degraded run.
-                if alpha_active:
-                    pattern_weight = pattern_weights.get(details['entry_type'], 1.0)
-                    alpha_result = alpha_scorer.score_symbol(
-                        symbol, factor_ranks.get(symbol, {}), regime_result, pattern_weight=pattern_weight,
-                    )
-                    if alpha_result['composite_score'] is None:
-                        if skipped_alpha < 3:
-                            logger.info(f"    {symbol}: technical BUY but no alpha score "
-                                        f"(insufficient factor history) — skipped")
-                        skipped_alpha += 1
-                        continue
-                    if alpha_result['composite_score'] < alpha_scorer.MIN_ALPHA_SCORE_TO_TRADE:
-                        if skipped_alpha < 3:
-                            logger.info(f"    {symbol}: technical BUY but alpha score "
-                                        f"{alpha_result['composite_score']} is below the "
-                                        f"{alpha_scorer.MIN_ALPHA_SCORE_TO_TRADE} minimum ({alpha_result['tier']}) — skipped")
-                        elif skipped_alpha == 3:
-                            logger.info("    ... further alpha-gate skips suppressed (see summary count below)")
-                        skipped_alpha += 1
-                        continue
-
-                    details['alpha_score'] = alpha_result['composite_score']
-                    details['alpha_tier']  = alpha_result['tier']
-
-                    tier_mult = alpha_scorer.TIER_SIZE_MULTIPLIER.get(alpha_result['tier'], 1.0)
-                    if tier_mult != 1.0:
-                        details['position_size'] = max(1, int(details['position_size'] * tier_mult))
-                        details['risk']   = round(details['position_size'] * risk_per_share, 2)
-                        details['reward'] = round(details['position_size'] * (details['target_price'] - details['entry_price']), 2)
-
-                # ── Slot-aware capital cap ──────────────────────────────────
-                # BUG FOUND from live logs (2026-08-19 run): signal_generator's
-                # max_capital_pct=0.40 caps any ONE trade at 40% of equity,
-                # but has no concept of how many OTHER slots still need
-                # filling. With MAX_OPEN_TRADES=10, that 40% ceiling was sized
-                # for an earlier 5-slot configuration — at 10 slots, just 2-3
-                # early signals can each get sized toward 40% and consume
-                # nearly the entire book before the other 7-8 slots ever see
-                # a rupee, permanently defeating the diversification
-                # MAX_OPEN_TRADES=10 was raised for in the first place. This
-                # is exactly what happened live: 3 symbols (HAPPSTMNDS,
-                # CARTRADE, DLF) deployed ₹49,034 of ₹50,000 equity — 98% of
-                # the entire portfolio in 3 names — while 7 of 10 slots sat
-                # empty because there was nothing left to fund them with.
-                #
-                # Fixed here, not in signal_generator.py's RISK_PROFILE,
-                # because slot/cash context (how many symbols are already
-                # open, how much free cash is left RIGHT NOW mid-loop) only
-                # exists here — signal_generator scores one candidate in
-                # isolation and structurally can't know this. max_capital_pct
-                # is left as-is as an outer backstop; THIS cap is what
-                # actually binds during normal operation.
-                #
-                # FAIR_SHARE_FLEX=2.0 still allows meaningful size-up for a
-                # genuinely high-conviction trade (matching the "willing to
-                # size up rather than spread thin" philosophy) — just not to
-                # the point of starving every slot behind it. slots_free
-                # already decrements live as earlier candidates in this same
-                # run open (see Step 6c's running slots_free -= 1), so this
-                # correctly tightens as the day's remaining room shrinks.
-                remaining_slots  = max(1, slots_free)
-                fair_share_cap   = (paper_mgr.free_cash / remaining_slots) * FAIR_SHARE_FLEX
-                capital_wanted   = details['entry_price'] * details['position_size']
-                if capital_wanted > fair_share_cap and details['entry_price'] > 0:
-                    fair_share_size = max(1, int(fair_share_cap / details['entry_price']))
-                    if fair_share_size < details['position_size']:
-                        logger.info(
-                            f"    {symbol}: position size reduced {details['position_size']}→{fair_share_size} "
-                            f"— reserving room for {remaining_slots - 1} other slot(s) "
-                            f"(fair share ₹{fair_share_cap:,.0f} of ₹{paper_mgr.free_cash:,.0f} free cash)"
-                        )
-                        details['position_size'] = fair_share_size
-                        details['risk']   = round(fair_share_size * risk_per_share, 2)
-                        details['reward'] = round(fair_share_size * (details['target_price'] - details['entry_price']), 2)
-
-                # ── Sentiment hard veto (independent of the alpha gate above
-                #    and of whether alpha scoring is even active this run —
-                #    see the Sentiment engine integration note near the top
-                #    of this file for why this is a separate, absolute-
-                #    threshold check rather than folded into the composite
-                #    score). A technically strong, high-alpha setup on a name
-                #    with a fresh, corroborated fraud/litigation cluster or a
-                #    pile-up of strongly negative headlines gets rejected
-                #    here regardless of how good the other factors look.
-                if sentiment_active and symbol in sentiment_readings:
-                    reading = sentiment_readings[symbol]
-                    blocked, veto_reason = sentiment_engine.check_veto(reading)
-                    if blocked:
-                        logger.info(f"    {symbol}: technical BUY (and alpha-gate pass) but {veto_reason} — skipped")
-                        skipped_sentiment += 1
-                        continue
-                    details['sentiment_score'] = sentiment_ranks.get(symbol)   # 0-100 percentile, or None if unranked
-                    details['sentiment_tier']  = SentimentEngine.tier(sentiment_ranks.get(symbol))
-
-                signals_found.append((symbol, details))
-                sector = SECTOR_MAP.get(symbol, symbol)
-
-                # ── Portfolio risk budget: shrink or skip to fit what's left ──
-                risk_budget_left = MAX_PORTFOLIO_RISK_PCT * total_equity - current_agg_risk
-                live_risk_pct = (current_agg_risk / total_equity) if total_equity > 0 else 0.0
-                if risk_budget_left <= 0:
-                    if skipped_risk < 3:
-                        logger.info(f"    {symbol}: skipped — portfolio risk budget exhausted "
-                                    f"({live_risk_pct*100:.1f}% ≥ {MAX_PORTFOLIO_RISK_PCT*100:.0f}% cap)")
-                    elif skipped_risk == 3:
-                        logger.info("    ... further risk-budget skips suppressed (see summary count below)")
-                    skipped_risk += 1
-                    continue
-                if details['risk'] > risk_budget_left:
-                    shrunk_size = max(0, int(risk_budget_left / risk_per_share)) if risk_per_share > 0 else 0
-                    if shrunk_size < 1:
-                        logger.info(f"    {symbol}: skipped — no room left in portfolio risk budget")
-                        skipped_risk += 1
-                        continue
-                    details['position_size'] = shrunk_size
-                    details['risk']   = round(shrunk_size * risk_per_share, 2)
-                    details['reward'] = round(shrunk_size * (details['target_price'] - details['entry_price']), 2)
-                    logger.info(f"    {symbol}: position size reduced to fit remaining risk budget "
-                                f"(₹{risk_budget_left:.0f} left)")
-
-                # ── Sector cap: at limit → only allowed via same-sector swap ──
-                sector_at_cap = sector_counts.get(sector, 0) >= LIVE_MAX_SECTOR_EXPOSURE
-
-                # Tranches computed AFTER risk-budget resolution, using the
-                # FINAL position_size (any shrink above already applied) —
-                # see build_tranches() / TRANCHE_CONFIG for the design.
-                tranches = build_tranches(
-                    details['entry_price'], details['stop_loss'],
-                    details['target_price'], details['position_size'],
-                )
-
-                if slots_free > 0 and not sector_at_cap:
-                    opened = paper_mgr.open_trade(
-                        symbol=symbol,
-                        entry_price=details['entry_price'],
-                        stop_loss=details['stop_loss'],
-                        target_price=details['target_price'],
-                        position_size=details['position_size'],
-                        entry_type=details['entry_type'],
-                        confidence=details.get('confidence'),
-                        risk_reward_ratio=details.get('risk_reward_ratio'),
-                        alpha_score=details.get('alpha_score'),
-                        alpha_tier=details.get('alpha_tier'),
-                        sentiment_score=details.get('sentiment_score'),
-                        sentiment_tier=details.get('sentiment_tier'),
-                        tranches=tranches,
-                    )
-                    if opened:
-                        new_trades  += 1
-                        slots_free  -= 1
-                        held_symbols.add(symbol)
-                        current_agg_risk += details['risk']
-                        sector_counts[sector] = sector_counts.get(sector, 0) + 1
-                else:
-                    if sector_at_cap and slots_free > 0:
-                        logger.info(f"    {symbol}: sector '{sector}' at cap ({LIVE_MAX_SECTOR_EXPOSURE}) "
-                                    f"— can only swap in via same-sector replacement")
-                        skipped_sector += 1
-
-                    # No free slots (or sector capped): look for a weak position
-                    # to replace. If the sector itself is capped, the swap MUST
-                    # come from within that same sector (sector-neutral), so it
-                    # never increases concentration beyond the cap. Operates on
-                    # whole position GROUPS (get_open_position_groups(), not
-                    # get_open_trades()) — a tranched position is one symbol's
-                    # worth of exposure, and replacing it means closing every
-                    # tranche together, not leaving two open and swapping one.
-                    weak = find_replaceable_position(
-                        paper_mgr.get_open_position_groups(), details, latest_prices,
-                        sector_filter=sector if sector_at_cap else None,
-                        alpha_active=alpha_active,
-                    )
-                    if weak is not None:
-                        exit_price = float(latest_prices.get(weak['symbol'], weak['entry_price']))
-                        closed_ok = paper_mgr.close_position_group(
-                            weak['group_id'], exit_price,
-                            exit_reason=f'Replaced by stronger signal ({symbol})',
-                        )
-                        if closed_ok:
-                            opened = paper_mgr.open_trade(
-                                symbol=symbol,
-                                entry_price=details['entry_price'],
-                                stop_loss=details['stop_loss'],
-                                target_price=details['target_price'],
-                                position_size=details['position_size'],
-                                entry_type=details['entry_type'],
-                                confidence=details.get('confidence'),
-                                risk_reward_ratio=details.get('risk_reward_ratio'),
-                                alpha_score=details.get('alpha_score'),
-                                alpha_tier=details.get('alpha_tier'),
-                                sentiment_score=details.get('sentiment_score'),
-                                sentiment_tier=details.get('sentiment_tier'),
-                                tranches=tranches,
-                            )
-                            if opened:
-                                new_trades   += 1
-                                replacements += 1
-                                held_symbols.discard(weak['symbol'])
-                                held_symbols.add(symbol)
-                                weak_risk = (float(weak['entry_price']) - float(weak['stop_loss'])) * int(weak['position_size'])
-                                current_agg_risk += details['risk'] - max(0.0, weak_risk)
-                                weak_sector = SECTOR_MAP.get(weak['symbol'], weak['symbol'])
-                                sector_counts[weak_sector] = max(0, sector_counts.get(weak_sector, 1) - 1)
-                                sector_counts[sector] = sector_counts.get(sector, 0) + 1
-
-            except Exception as e:
-                logger.error(f"  Error on {symbol}: {e}")
-
-    if signals_found:
-        label = "BUY signals (passed alpha gate)" if alpha_active else "BUY signals (alpha scoring inactive this run)"
-        logger.info(f"\n  {label} ({len(signals_found)}):")
-        for sym, det in signals_found:
-            alpha_note = f" | alpha={det['alpha_score']} ({det['alpha_tier']})" if det.get('alpha_score') is not None else ""
-            sentiment_note = f" | sentiment={det['sentiment_score']} ({det['sentiment_tier']})" if det.get('sentiment_score') is not None else ""
-            logger.info(
-                f"    🎯 {sym} | {det['entry_type']} | "
-                f"Entry ₹{det['entry_price']:.2f} | SL ₹{det['stop_loss']:.2f} | "
-                f"Target ₹{det['target_price']:.2f} | R:R 1:{det['risk_reward_ratio']:.1f} | "
-                f"conf={det.get('confidence')}{alpha_note}{sentiment_note}"
-            )
-    else:
-        logger.info("  No new BUY signals today")
-    logger.info(f"  New trades opened: {new_trades}  (replacements: {replacements}, "
-                f"skipped on alpha gate: {skipped_alpha}, skipped on sentiment veto: {skipped_sentiment}, "
-                f"skipped on risk budget: {skipped_risk}, skipped on sector cap: {skipped_sector})")
-
-    # ── Step 7: Equity snapshot ───────────────────────────────────────────────
-    logger.info("\n[Step 7] Logging equity snapshot...")
-    paper_mgr.log_daily_equity(latest_prices)
-
-    # ── Step 8: Portfolio summary ─────────────────────────────────────────────
-    _print_summary(paper_mgr, latest_prices)
-
-    logger.info("\n✅ Run complete — GitHub Actions will now commit updated CSVs to repo")
-
-
-def _print_summary(paper_mgr, latest_prices):
-    summary = paper_mgr.get_summary(latest_prices)
-
+    ms = report['market_state']
     logger.info("\n" + "=" * 70)
-    logger.info("📈 PORTFOLIO SUMMARY")
+    logger.info("  DAILY SUMMARY")
     logger.info("=" * 70)
+    logger.info(f"  Market state          : {ms['state']}  (exposure {ms['exposure']:.2f}x, "
+                f"{ms['max_slots']} slots, risk score {ms['risk_score']:.2f})")
+    if ms['triggers']:
+        for t in ms['triggers']:
+            logger.info(f"    ⚠ {t}")
+    logger.info(f"  Candidates            : {report['candidates']}")
+    logger.info(f"  Plans placed (fill T+1): {report['placed'] or 'none'}")
+    logger.info(f"  Filled today          : "
+                f"{[f'{s} @ ₹{p:.2f}' for s, p, _ in report['fills']['opened']] or 'none'}")
+    for sym, why in report['fills']['expired']:
+        logger.info(f"    ✗ {sym}: {why}")
+    logger.info(f"  Closed today          : "
+                f"{[f'{s} ({r}, {rm:+.2f}R)' for s, r, rm in report['exits']['closed']] or 'none'}")
+    logger.info(f"  Stops trailed         : {len(report['exits']['trailed'])}")
 
+    summary = paper_mgr.get_summary(latest_prices)
     logger.info("\n  ── CAPITAL ──────────────────────────────────────────────────")
-    logger.info(f"  Initial Equity        : ₹{summary.get('initial_equity',        0):>10,.2f}")
-    logger.info(f"  Deployed Capital      : ₹{summary.get('deployed_capital',      0):>10,.2f}"
-                f"  ({summary.get('open_trades', 0)} open positions)")
-    logger.info(f"  Free Cash             : ₹{summary.get('free_cash',             0):>10,.2f}")
-    logger.info(f"  Total Portfolio Value : ₹{summary.get('total_portfolio_value', 0):>10,.2f}")
-
-    # Makes compounding tangible: every rupee of realised + unrealised P&L is
-    # already inside total_portfolio_value, which is what position sizing is
-    # based on (see RISK_PROFILE header note) — so this multiple is a direct
-    # readout of how much bigger your NEXT trade's sizing basis has become as
-    # a result of past gains, not just a vanity stat.
-    initial_eq = summary.get('initial_equity', 0) or INITIAL_EQUITY
-    if initial_eq > 0:
-        growth_multiple = summary.get('total_portfolio_value', 0) / initial_eq
-        logger.info(f"  Growth Multiple       : {growth_multiple:.3f}x initial equity "
-                    f"(this is what your next trade's position size scales off)")
-
-    logger.info("\n  ── P&L ──────────────────────────────────────────────────────")
-    logger.info(f"  Realised P&L          : ₹{summary.get('realised_pnl',    0):>+10,.2f}"
-                f"  ({summary.get('closed_trades', 0)} closed trades)")
-    logger.info(f"  Unrealised P&L        : ₹{summary.get('unrealised_pnl',  0):>+10,.2f}")
-    logger.info(f"  Total P&L             : ₹{summary.get('total_pnl',       0):>+10,.2f}")
-
+    logger.info(f"  Equity                : ₹{summary.get('current_equity', 0):>12,.2f}")
+    logger.info(f"  Free Cash             : ₹{summary.get('free_cash',      0):>12,.2f}")
+    logger.info(f"  Total P&L             : ₹{summary.get('total_pnl',      0):>+12,.2f}")
     if summary.get('closed_trades', 0) > 0:
-        logger.info("\n  ── CLOSED TRADE STATS ───────────────────────────────────────")
         logger.info(f"  Win Rate              : {summary.get('win_rate', 0):.1f}%"
                     f"  ({summary.get('wins', 0)}W / {summary.get('losses', 0)}L)")
         logger.info(f"  Avg Win / Avg Loss    : ₹{summary.get('avg_win', 0):+,.2f}"
@@ -1010,6 +652,7 @@ def _print_summary(paper_mgr, latest_prices):
     logger.info("\n  ── OPEN POSITIONS ───────────────────────────────────────────")
     paper_mgr.print_open_positions(latest_prices)
     logger.info("=" * 70 + "\n")
+    return report
 
 
 if __name__ == "__main__":
