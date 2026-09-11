@@ -40,6 +40,121 @@ def _retry(fn, attempts=3, base_delay=1.5, what=""):
     return None
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# DATA INTEGRITY
+# ═════════════════════════════════════════════════════════════════════════════
+# Everything downstream — ATR, Yang-Zhang volatility, efficiency ratio, stop
+# distance, position size, the cost floor — is computed from this frame. A
+# single corrupted bar does not produce a visibly wrong answer; it produces a
+# plausible-looking one, which is worse, because nothing rejects it.
+#
+# The specific exposure here is CORPORATE ACTIONS. yfinance is called with
+# auto_adjust=False, so a 1:10 split prints as a -90% close-to-close move that
+# never happened. Consequences, in order of how much they cost:
+#   • sigma explodes, so the stop is placed absurdly wide and position size
+#     collapses to a fraction of what it should be;
+#   • or the split sits just outside the volatility window while the price
+#     level shifts inside it, so ATR is measured on one price regime and the
+#     stop applied to another;
+#   • efficiency ratio, RSI and ADX all read the artefact as a real move.
+#
+# A split is distinguishable from a genuine crash by the SHAPE of the bar, not
+# its size. A real -35% day has an intraday range to match — the stock traded
+# down through it. A split gaps the whole series to a new level and the bar
+# itself looks utterly ordinary. That is the test applied below, and it is why
+# a legitimate limit-down day is left alone rather than "corrected".
+
+_SPLIT_RATIOS = [1/20, 1/10, 1/5, 1/4, 1/3, 1/2, 2/3, 3/2, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0]
+_RATIO_TOLERANCE = 0.04        # 4% — corporate-action ratios are exact, prices are not
+_JUMP_THRESHOLD = 0.22         # close-to-close move that triggers inspection
+_ORDINARY_RANGE = 0.08         # a bar whose own high-low range is under this did not
+                               # trade through the move it appears to have made
+
+
+def _sanitize_ohlcv(df, symbol):
+    """
+    Returns (clean_df, notes). Never raises: a frame that cannot be repaired is
+    returned with its problems described, and the caller decides.
+
+    Four passes, cheapest first:
+      1. structural  — non-positive prices, high/low inconsistent with open/close
+      2. duplicates  — repeated or out-of-order dates
+      3. corporate actions — detected and BACK-ADJUSTED rather than dropped, so
+         the symbol stays tradeable with a continuous price series
+      4. residual    — any remaining implausible jump is reported, not silently
+         accepted
+    """
+    notes = []
+    d = df.copy()
+
+    # ── 1. Structural ────────────────────────────────────────────────────────
+    bad_price = (d[['open', 'high', 'low', 'close']] <= 0).any(axis=1)
+    if bad_price.any():
+        notes.append(f"dropped {int(bad_price.sum())} bar(s) with non-positive prices")
+        d = d[~bad_price]
+
+    if len(d) == 0:
+        return d, notes
+
+    body_hi = d[['open', 'close']].max(axis=1)
+    body_lo = d[['open', 'close']].min(axis=1)
+    # Clamp rather than drop: a high printed below the close is a feed glitch on
+    # one field, and discarding the whole bar would punch a hole in every
+    # rolling window that spans it.
+    hi_bad = d['high'] < body_hi
+    lo_bad = d['low'] > body_lo
+    if hi_bad.any() or lo_bad.any():
+        notes.append(f"clamped {int(hi_bad.sum() + lo_bad.sum())} inconsistent high/low value(s)")
+        d.loc[hi_bad, 'high'] = body_hi[hi_bad]
+        d.loc[lo_bad, 'low'] = body_lo[lo_bad]
+
+    # ── 2. Duplicates and ordering ───────────────────────────────────────────
+    if 'datetime' in d.columns:
+        dupes = d['datetime'].duplicated(keep='last')
+        if dupes.any():
+            notes.append(f"dropped {int(dupes.sum())} duplicate date(s)")
+            d = d[~dupes]
+        if not d['datetime'].is_monotonic_increasing:
+            notes.append("re-sorted out-of-order dates")
+            d = d.sort_values('datetime')
+    d = d.reset_index(drop=True)
+
+    if len(d) < 3:
+        return d, notes
+
+    # ── 3. Corporate actions ─────────────────────────────────────────────────
+    close = d['close'].astype(float)
+    prev = close.shift()
+    ratio = close / prev
+    move = (ratio - 1.0).abs()
+    bar_range = (d['high'].astype(float) - d['low'].astype(float)) / close
+
+    suspects = move.index[(move > _JUMP_THRESHOLD) & (bar_range < _ORDINARY_RANGE)]
+    for i in suspects:
+        r = float(ratio.iloc[i])
+        match = next((cand for cand in _SPLIT_RATIOS
+                      if abs(r - cand) / cand <= _RATIO_TOLERANCE), None)
+        if match is None:
+            continue
+        # Back-adjust everything BEFORE the event onto the post-event scale, so
+        # the series is continuous and the most recent bars — the ones every
+        # signal is computed from — keep their true traded prices.
+        for col in ('open', 'high', 'low', 'close'):
+            d.loc[:i - 1, col] = d.loc[:i - 1, col].astype(float) * match
+        if 'volume' in d.columns and match > 0:
+            d.loc[:i - 1, 'volume'] = d.loc[:i - 1, 'volume'].astype(float) / match
+        notes.append(f"back-adjusted a {1/match:.4g}:1 corporate action at bar {i}")
+
+    # ── 4. Residual ──────────────────────────────────────────────────────────
+    close = d['close'].astype(float)
+    residual = (close / close.shift() - 1.0).abs()
+    remaining = int((residual > _JUMP_THRESHOLD).sum())
+    if remaining:
+        notes.append(f"{remaining} unexplained move(s) over {_JUMP_THRESHOLD*100:.0f}% remain "
+                     f"— genuine limit moves, or an action with an unrecognised ratio")
+    return d, notes
+
+
 def _coerce_date(value):
     """Timestamps, datetimes, date strings and numpy datetimes all appear here
     depending on yfinance version; anything unparseable becomes None rather
@@ -126,6 +241,14 @@ class DataFetcherFree:
                 return None
 
             df = df[required].dropna().copy()
+
+            # Sanitise BEFORE the tail cut. A split sitting just outside the
+            # retained window still shifts the price level inside it, so the
+            # check has to see the whole fetched history, not the slice that
+            # survives.
+            df, notes = _sanitize_ohlcv(df, symbol)
+            for note in notes:
+                logger.warning(f"  🧹 {symbol}: {note}")
 
             if len(df) > days:
                 df = df.tail(days).copy()
