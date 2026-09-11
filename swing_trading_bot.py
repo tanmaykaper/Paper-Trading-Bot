@@ -331,6 +331,30 @@ class SwingTradingBot:
         a deliberately unmistakable future price shock and confirms an
         earlier bar's decisions are completely unaffected by it).
         """
+        # ── DEPRECATED ───────────────────────────────────────────────────────
+        # This simulates a policy live trading no longer runs. Since it was
+        # written the deployed stack gained adaptive barrier geometry, a
+        # chandelier trail, momentum-decay exits, per-trade horizons, slot
+        # competition, fractional Kelly sizing, a regime exposure controller,
+        # next-bar fills, a cost floor, an earnings blackout and T+1
+        # settlement. None of that is modelled here.
+        #
+        # Left in place rather than deleted because it is still a useful
+        # single-policy sandbox and other code may call it — but it must not be
+        # mistaken for validation of what is being traded. That mistake has
+        # already been made once in this project (see tranche_manager.py's
+        # header: the backtester silently tested a single-exit policy while
+        # live ran three tranches), and this warning exists so it cannot be
+        # made silently a second time.
+        #
+        # Use backtest_engine.WalkForwardBacktest / run_backtest.py v6, which
+        # drives the real orchestrator bar by bar.
+        logger.warning(
+            "⚠ backtest_portfolio() models the PRE-v11 policy and is not a test of what "
+            "live trading does. Use run_backtest.py v6 (backtest_engine.WalkForwardBacktest) "
+            "for validation; treat these numbers as a single-policy sandbox only."
+        )
+
         sector_exposure_cap = MAX_SECTOR_EXPOSURE if max_sector_exposure is None else max_sector_exposure
 
         logger.info(f"\n{'='*70}")
