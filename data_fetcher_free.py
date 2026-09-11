@@ -8,6 +8,8 @@ import logging
 import warnings
 import time
 import random
+import json
+import re
 
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO)
@@ -226,52 +228,156 @@ class DataFetcherFree:
         logger.info(f"✓ Bulk LTP: {len(results)}/{len(symbols)} symbols resolved")
         return results
 
-    def get_fundamentals(self, symbol):
+    # ── Fundamentals ─────────────────────────────────────────────────────────
+    # v2. The v1 parser looked for `soup.find('td', string=label)`. Screener.in
+    # does not render its headline ratios in table cells — they live in a
+    # `#top-ratios` list of `<li><span class="name">P/E</span><span
+    # class="value">…</span></li>`. So every lookup returned None, every symbol
+    # fell through to _default_fundamentals(), and the entire fundamental gate
+    # has been scoring the SAME synthetic company (P/E 25, D/E 0.70, ROE 18%)
+    # for every stock in the universe. It has never rejected anything, and a
+    # genuinely broken balance sheet looked identical to a healthy one.
+    #
+    # Three changes beyond fixing the selector:
+    #   • Parsing is multi-strategy. The top-ratios list first, then a
+    #     document-wide label scan, then the ratio tables. Screener's markup
+    #     shifts periodically and a single-strategy parser fails silently when
+    #     it does — which is exactly the failure being repaired here.
+    #   • The result says whether it was MEASURED. `fundamentals_measured`
+    #     distinguishes "this company passed" from "we never looked", which the
+    #     screener can then treat differently instead of waving both through.
+    #   • Results are cached to disk for CACHE_DAYS. Fundamentals change
+    #     quarterly; refetching 100+ symbols daily is pure rate-limit exposure
+    #     for data that has not moved, and screener.in will throttle a scraper
+    #     that does it.
+
+    CACHE_PATH = '.fundamentals_cache.json'
+    CACHE_DAYS = 7
+
+    _LABELS = {
+        'pe_ratio':        ('stock p/e', 'p/e'),
+        'debt_to_equity':  ('debt to equity',),
+        'roe_5yr':         ('roe', 'return on equity'),
+        'current_ratio':   ('current ratio',),
+        'revenue_cagr':    ('sales growth', 'compounded sales growth'),
+        'market_cap':      ('market cap',),
+        'book_value':      ('book value',),
+    }
+
+    @staticmethod
+    def _to_float(text):
+        """Screener renders '1,234.56 %', '₹ 1,234 Cr.' and '' — all of which
+        must become a number or None, never an exception."""
+        if not text:
+            return None
+        cleaned = re.sub(r'[^0-9.\-]', '', str(text).replace(',', ''))
+        if cleaned in ('', '-', '.', '-.'):
+            return None
         try:
-            url     = f"https://www.screener.in/company/{symbol}/"
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            resp    = requests.get(url, headers=headers, timeout=10)
+            return float(cleaned)
+        except ValueError:
+            return None
 
-            if resp.status_code != 200:
-                return self._default_fundamentals()
+    def _load_cache(self):
+        try:
+            with open(self.CACHE_PATH) as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return {}
 
-            soup         = BeautifulSoup(resp.content, 'html.parser')
-            fundamentals = {}
+    def _save_cache(self, cache):
+        try:
+            with open(self.CACHE_PATH, 'w') as fh:
+                json.dump(cache, fh)
+        except OSError:
+            pass
 
-            def _extract(label):
-                td = soup.find('td', string=label)
-                return td.find_next('td').text.strip() if td else None
+    def get_fundamentals(self, symbol, force=False):
+        cache = self._load_cache()
+        hit = cache.get(symbol)
+        if hit and not force:
+            age = (datetime.now() - datetime.fromisoformat(hit['fetched'])).days
+            if age < self.CACHE_DAYS:
+                return hit['data']
 
-            try:
-                v = _extract('P/E')
-                if v:
-                    fundamentals['pe_ratio'] = float(v)
-            except Exception:
-                pass
+        parsed = _retry(lambda: self._scrape_screener(symbol), attempts=2,
+                        what=f"fundamentals({symbol})") or {}
 
-            try:
-                v = _extract('Debt to Equity')
-                if v:
-                    fundamentals['debt_to_equity'] = float(v)
-            except Exception:
-                pass
+        data = self._default_fundamentals()
+        data.update({k: v for k, v in parsed.items() if v is not None})
+        data['fundamentals_measured'] = bool(parsed)
+        data['fundamentals_fields'] = sorted(parsed.keys())
 
-            try:
-                v = _extract('ROE')
-                if v:
-                    fundamentals['roe_5yr'] = float(v.replace('%', '')) / 100
-            except Exception:
-                pass
+        cache[symbol] = {'fetched': datetime.now().isoformat(), 'data': data}
+        self._save_cache(cache)
 
-            for k, val in self._default_fundamentals().items():
-                fundamentals.setdefault(k, val)
+        if parsed:
+            logger.info(f"✓ Fundamentals {symbol}: {len(parsed)} fields "
+                        f"(P/E {data.get('pe_ratio')}, D/E {data.get('debt_to_equity')}, "
+                        f"ROE {data.get('roe_5yr')})")
+        else:
+            logger.warning(f"⚠ Fundamentals {symbol}: nothing parsed — defaults in use, "
+                           f"flagged unmeasured")
+        return data
 
-            logger.info(f"✓ Fundamentals fetched for {symbol}")
-            return fundamentals
+    def _scrape_screener(self, symbol):
+        """Returns only the fields actually found. An empty dict means the page
+        was unreadable, which the caller reports rather than disguises."""
+        headers = {'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                                  'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36')}
+        soup = None
+        for url in (f"https://www.screener.in/company/{symbol}/consolidated/",
+                    f"https://www.screener.in/company/{symbol}/"):
+            resp = requests.get(url, headers=headers, timeout=12)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.content, 'html.parser')
+                break
+        if soup is None:
+            return {}
 
-        except Exception as e:
-            logger.error(f"⚠️ Fundamentals error for {symbol}: {e}")
-            return self._default_fundamentals()
+        found = {}
+
+        def record(label_text, value_text):
+            label = (label_text or '').strip().lower().rstrip(':')
+            value = self._to_float(value_text)
+            if value is None:
+                return
+            for field, aliases in self._LABELS.items():
+                if field in found:
+                    continue
+                if any(label == a or label.startswith(a) for a in aliases):
+                    found[field] = value
+
+        # Strategy 1 — the headline ratio list.
+        top = soup.find(id='top-ratios')
+        if top:
+            for li in top.find_all('li'):
+                name = li.find('span', class_='name')
+                val = li.find('span', class_='value') or li.find('span', class_='number')
+                if name is not None:
+                    record(name.get_text(), (val.get_text() if val else
+                                             li.get_text().replace(name.get_text(), '')))
+
+        # Strategy 2 — document-wide label/value pairing, for markup changes.
+        if len(found) < 3:
+            for span in soup.find_all('span', class_='name'):
+                sib = span.find_next('span')
+                record(span.get_text(), sib.get_text() if sib else '')
+
+        # Strategy 3 — the ratio tables, which do use <td>.
+        if len(found) < 3:
+            for td in soup.find_all('td'):
+                nxt = td.find_next('td')
+                if nxt is not None:
+                    record(td.get_text(), nxt.get_text())
+
+        # Screener reports ROE and growth as whole percentages; the screener
+        # module accepts either convention but the fraction form is what the
+        # rest of this codebase passes around.
+        for pct_field in ('roe_5yr', 'revenue_cagr'):
+            if pct_field in found and found[pct_field] > 1.5:
+                found[pct_field] = found[pct_field] / 100.0
+        return found
 
     def _default_fundamentals(self):
         return {
@@ -282,4 +388,6 @@ class DataFetcherFree:
             'revenue_cagr':     0.12,
             'current_ratio':    1.3,
             'market_cap':     500000,
+            'fundamentals_measured': False,
+            'fundamentals_fields': [],
         }
