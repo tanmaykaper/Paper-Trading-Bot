@@ -106,7 +106,7 @@ class TradingOrchestrator:
     # ─────────────────────────────────────────────────────────────────────────
     def run(self, universe_dfs, index_df, vix_df=None, fundamentals=None,
             alpha_scores=None, base_slots=5, max_hold_days=18,
-            candidate_enricher=None):
+            candidate_enricher=None, earnings_bars=None):
         """
         One complete daily cycle. universe_dfs is the {symbol: OHLCV} dict the
         scanner already builds — it must now include HELD symbols, which the
@@ -127,7 +127,7 @@ class TradingOrchestrator:
         report['market_state'] = ms
 
         # ── 2. Exits, before anything competes for the slots they free ───────
-        report['exits'] = self._process_exits(universe_dfs, prices)
+        report['exits'] = self._process_exits(universe_dfs, prices, earnings_bars or {})
 
         # ── 3. Yesterday's approved plans, before today's candidates ─────────
         report['fills'] = self._process_pending(universe_dfs, ms)
@@ -201,7 +201,7 @@ class TradingOrchestrator:
         return report
 
     # ═════════════════════════════════════════════════════════════════════════
-    def _process_exits(self, universe_dfs, prices):
+    def _process_exits(self, universe_dfs, prices, earnings_bars=None):
         out = {'closed': [], 'trailed': []}
         df = self._open_trades()
         if len(df) == 0:
@@ -213,7 +213,8 @@ class TradingOrchestrator:
                 continue                     # no price this run: skip, never assume one
             ev = self.exits.evaluate(row, bars=universe_dfs.get(sym),
                                      current_price=prices[sym],
-                                     bars_held=int(float(row.get('hold_days') or 0)))
+                                     bars_held=int(float(row.get('hold_days') or 0)),
+                                     bars_to_earnings=(earnings_bars or {}).get(sym))
             if ev['action'] == 'EXIT':
                 self.mgr.close_position(row['trade_id'], ev['exit_price'], ev['exit_reason'])
                 updates[row['trade_id']] = {
