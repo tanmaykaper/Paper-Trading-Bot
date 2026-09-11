@@ -40,6 +40,20 @@ def _retry(fn, attempts=3, base_delay=1.5, what=""):
     return None
 
 
+def _coerce_date(value):
+    """Timestamps, datetimes, date strings and numpy datetimes all appear here
+    depending on yfinance version; anything unparseable becomes None rather
+    than an exception inside a calendar lookup."""
+    if value is None:
+        return None
+    try:
+        if hasattr(value, 'date') and not isinstance(value, str):
+            return value.date()
+        return pd.to_datetime(str(value)).date()
+    except Exception:
+        return None
+
+
 class DataFetcherFree:
     def __init__(self):
         logger.info("✓ DataFetcherFree initialized (no API needed)")
@@ -378,6 +392,103 @@ class DataFetcherFree:
             if pct_field in found and found[pct_field] > 1.5:
                 found[pct_field] = found[pct_field] / 100.0
         return found
+
+    # ── Earnings calendar ────────────────────────────────────────────────────
+    # The single largest source of overnight gap risk a swing position carries.
+    # This system places EOD stops at roughly 2.3 sigma — about 4-5% of price on
+    # a typical name — while an Indian results announcement routinely moves a
+    # midcap 6-12% at the open. Holding through results therefore replaces a
+    # controlled, measured risk with an uncontrolled one on which the strategy
+    # has no edge whatsoever: nothing in the technical stack forecasts an
+    # earnings surprise, so the position is a coin flip sized as though it were
+    # a 2:1 setup.
+    #
+    # yfinance exposes this free. Coverage for NSE names is good but not
+    # complete and the dates shift, so every failure path returns None, and
+    # None means "no constraint" rather than "no earnings" — an absent calendar
+    # must never silently become a blackout that empties the universe.
+
+    EARNINGS_CACHE_PATH = '.earnings_cache.json'
+    EARNINGS_CACHE_DAYS = 3
+
+    def get_next_earnings_date(self, symbol, force=False):
+        """
+        Returns the next scheduled results date as a datetime.date, or None.
+
+        Cached for a few days rather than a week: unlike ratios, this value is
+        actively approaching, and a stale entry is worse than no entry — it
+        would clear a blackout that is in fact still in force.
+        """
+        cache = {}
+        try:
+            with open(self.EARNINGS_CACHE_PATH) as fh:
+                cache = json.load(fh)
+        except (OSError, ValueError):
+            pass
+
+        hit = cache.get(symbol)
+        if hit and not force:
+            try:
+                age = (datetime.now() - datetime.fromisoformat(hit['fetched'])).days
+                if age < self.EARNINGS_CACHE_DAYS:
+                    return datetime.fromisoformat(hit['date']).date() if hit['date'] else None
+            except (ValueError, KeyError):
+                pass
+
+        result = _retry(lambda: self._fetch_earnings_date(symbol), attempts=2,
+                        what=f"earnings({symbol})")
+
+        cache[symbol] = {'fetched': datetime.now().isoformat(),
+                         'date': result.isoformat() if result else None}
+        try:
+            with open(self.EARNINGS_CACHE_PATH, 'w') as fh:
+                json.dump(cache, fh)
+        except OSError:
+            pass
+        return result
+
+    def _fetch_earnings_date(self, symbol):
+        """
+        Two sources, because yfinance exposes this inconsistently across
+        versions and tickers: the calendar dict first, then the earnings-dates
+        frame. Only FUTURE dates count — get_earnings_dates() returns past
+        announcements too, and a results date from last quarter would clear
+        every blackout by being comfortably in the past.
+        """
+        ticker = yf.Ticker(self._to_yf_symbol(symbol))
+        today = datetime.now().date()
+        candidates = []
+
+        try:
+            cal = ticker.calendar
+            if isinstance(cal, dict):
+                for key in ('Earnings Date', 'earningsDate'):
+                    val = cal.get(key)
+                    for item in (val if isinstance(val, (list, tuple)) else [val]):
+                        d = _coerce_date(item)
+                        if d and d >= today:
+                            candidates.append(d)
+            elif cal is not None and hasattr(cal, 'loc'):
+                for key in ('Earnings Date', 'earningsDate'):
+                    if key in getattr(cal, 'index', []):
+                        d = _coerce_date(cal.loc[key].iloc[0])
+                        if d and d >= today:
+                            candidates.append(d)
+        except Exception:
+            pass
+
+        try:
+            frame = ticker.get_earnings_dates(limit=8)
+            if frame is not None and len(frame):
+                for idx in frame.index:
+                    d = _coerce_date(idx)
+                    if d and d >= today:
+                        candidates.append(d)
+        except Exception:
+            pass
+
+        return min(candidates) if candidates else None
+
 
     def _default_fundamentals(self):
         return {
