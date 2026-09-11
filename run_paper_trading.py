@@ -113,6 +113,7 @@
 import logging
 import sys
 import os
+import numpy as np
 import pandas as pd
 from datetime import datetime
 
@@ -160,6 +161,14 @@ MAX_HOLD_DAYS   = 18
 # bounded +/-7.5% tie-break and the economics decide participation. Set False to
 # drop it entirely; the allocator ranks on forward return per slot-day either way.
 USE_ALPHA_ENGINE = True
+
+# The objective the daily brief measures pace against. Stated here rather than
+# buried in the report so it is a visible, editable assumption — the brief
+# converts it into the win rate the CURRENT trade geometry would need, which is
+# the one input worth watching converge.
+TARGET_EQUITY = 75000
+TARGET_MONTHS = 3.5
+EMAIL_CONFIGURED = bool(os.getenv('EMAIL_SENDER') and os.getenv('EMAIL_PASSWORD'))
 
 TRADES_CSV = 'paper_trades.csv'
 EQUITY_CSV = 'daily_equity.csv'
@@ -778,7 +787,25 @@ def run_eod():
                 f"{[f'{s} ({r}, {rm:+.2f}R)' for s, r, rm in report['exits']['closed']] or 'none'}")
     logger.info(f"  Stops trailed         : {len(report['exits']['trailed'])}")
 
+    # ── Daily brief ──────────────────────────────────────────────────────────
+    # v11 decides for itself, so the useful report is no longer "here is a
+    # signal" (which is all _format_email_body knows how to produce) but "here
+    # is what the system did, and is it on track". Sent after the equity log so
+    # the capital figures in it are the ones just written.
     summary = paper_mgr.get_summary(latest_prices)
+    try:
+        all_trades = pd.read_csv(TRADES_CSV)
+        open_mask = all_trades['status'] == 'OPEN'
+        all_trades.loc[open_mask, 'last_price'] = all_trades.loc[open_mask, 'symbol'].map(latest_prices)
+        NotificationHandler(use_email=EMAIL_CONFIGURED).send_daily_brief(
+            report=report, summary=summary, trades_df=all_trades,
+            funnel=bot.signal_gen.funnel_summary(),
+            calibrator=getattr(orchestrator, 'calibrator', None),
+            target={'equity': TARGET_EQUITY, 'months': TARGET_MONTHS},
+        )
+    except Exception as e:
+        logger.warning(f"  Daily brief not sent ({e})")
+
     logger.info("\n  ── CAPITAL ──────────────────────────────────────────────────")
     logger.info(f"  Equity                : ₹{summary.get('current_equity', 0):>12,.2f}")
     logger.info(f"  Free Cash             : ₹{summary.get('free_cash',      0):>12,.2f}")
