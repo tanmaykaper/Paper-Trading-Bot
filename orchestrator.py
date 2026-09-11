@@ -105,7 +105,8 @@ class TradingOrchestrator:
 
     # ─────────────────────────────────────────────────────────────────────────
     def run(self, universe_dfs, index_df, vix_df=None, fundamentals=None,
-            alpha_scores=None, base_slots=5, max_hold_days=18):
+            alpha_scores=None, base_slots=5, max_hold_days=18,
+            candidate_enricher=None):
         """
         One complete daily cycle. universe_dfs is the {symbol: OHLCV} dict the
         scanner already builds — it must now include HELD symbols, which the
@@ -140,6 +141,27 @@ class TradingOrchestrator:
         else:
             candidates = []
             logger.info(f"  Entries suspended — {ms['state']}: {ms['note']}")
+        # ── 4b. Candidate enrichment ─────────────────────────────────────────
+        # A hook rather than a hard dependency, because the expensive
+        # per-symbol work that belongs here — news sentiment above all — is
+        # only affordable once the universe has been narrowed to a handful of
+        # candidates. Running it across 100+ symbols daily would be minutes of
+        # HTTP for data that gets discarded on 98 of them.
+        #
+        # The enricher receives the candidate list and returns the surviving
+        # subset, free to drop entries (a hard veto) and to attach fields the
+        # allocator reads (a soft tilt). Keeping it a callback means the
+        # orchestrator does not import the sentiment engine, and a failure in
+        # an optional layer cannot take the daily run down with it.
+        if candidate_enricher is not None and candidates:
+            before = len(candidates)
+            try:
+                candidates = candidate_enricher(candidates) or []
+                if before != len(candidates):
+                    logger.info(f"  Enricher: {before} → {len(candidates)} candidates")
+            except Exception as e:
+                logger.warning(f"  Candidate enricher failed ({e}) — proceeding unenriched")
+
         report['candidates'] = len(candidates)
 
         # ── 5. Allocate ──────────────────────────────────────────────────────
