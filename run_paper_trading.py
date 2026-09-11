@@ -466,6 +466,76 @@ def find_replaceable_position(open_trades, new_details, latest_prices, sector_fi
     return None
 
 
+def build_sentiment_enricher(logger_):
+    """
+    Returns a callable the orchestrator applies to its candidate list, or None
+    when the sentiment engine is unavailable.
+
+    ── Why this runs on candidates only ────────────────────────────────────────
+    Every other factor in this system is computed from OHLCV already in memory.
+    Sentiment is the one layer that needs a fresh HTTP round trip per symbol,
+    so scoring the full 100+ scan universe would be minutes of network for data
+    discarded on all but a handful of names. By the time the orchestrator calls
+    this, signal_generator has already reduced the universe to the few setups
+    that qualified on price — which is precisely the set worth asking the news
+    about.
+
+    ── Two effects, deliberately separate ──────────────────────────────────────
+    HARD VETO (absolute thresholds, SentimentEngine.check_veto): a pending
+    regulatory action, a pileup of strongly negative headlines, or a decisively
+    negative tone on good confidence removes the candidate outright. This
+    cannot be a percentile effect — "least bad news in today's universe" is not
+    the same statement as "no bad news", and on a day when every name is clean
+    the bottom-ranked one is still clean.
+
+    SOFT TILT (cross-sectional percentile): ranked against the other candidates
+    and handed to portfolio_allocator as sentiment_percentile, where it moves
+    the ordering by at most ±6%. Ranking rather than thresholding self-calibrates
+    to the day's news environment, which on a broad risk-off session skews
+    negative for everything.
+
+    A symbol with no usable headlines is left untouched — no veto, no tilt. That
+    is the honest reading of an absent signal, and it is why the percentile is
+    attached only when the ranker actually produced one.
+    """
+    try:
+        engine = SentimentEngine()
+    except Exception as e:
+        logger_.warning(f"  Sentiment engine unavailable ({e}) — candidates proceed unscored")
+        return None
+
+    def enrich(candidates):
+        symbols = [c['symbol'] for c in candidates]
+        if not symbols:
+            return candidates
+        logger_.info(f"  📰 Sentiment: scoring {len(symbols)} candidates...")
+        readings = engine.score_universe(symbols)
+        ranks = engine.rank_universe(readings)
+
+        survivors = []
+        for c in candidates:
+            reading = readings.get(c['symbol'])
+            if reading is None:
+                survivors.append(c)
+                continue
+            blocked, reason = engine.check_veto(reading)
+            if blocked:
+                logger_.info(f"    ✗ {c['symbol']}: {reason}")
+                continue
+            pct = ranks.get(c['symbol'])
+            if pct is not None:
+                c['sentiment_percentile'] = pct
+                c['sentiment_tier'] = engine.tier(pct)
+            survivors.append(c)
+
+        scored = sum(1 for c in survivors if c.get('sentiment_percentile') is not None)
+        logger_.info(f"    {len(survivors)}/{len(candidates)} cleared the veto, "
+                     f"{scored} carry a percentile")
+        return survivors
+
+    return enrich
+
+
 def run_eod():
     """
     v11 — DAILY RUN, DELEGATED TO orchestrator.TradingOrchestrator
@@ -625,6 +695,7 @@ def run_eod():
         universe_dfs, nifty_df, vix_df=vix_df, fundamentals=fundamentals,
         alpha_scores=alpha_scores, base_slots=MAX_OPEN_TRADES,
         max_hold_days=MAX_HOLD_DAYS,
+        candidate_enricher=build_sentiment_enricher(logger),
     )
 
     # ── Step 5: equity log and report ────────────────────────────────────────
