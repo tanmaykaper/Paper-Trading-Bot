@@ -182,6 +182,11 @@ RISK_PROFILE = {
     'edge_tilt':             0.60,   # how far entry quality is allowed to tilt the first-passage
                                      # win probability away from its driftless barrier ratio
 
+    # ── Earnings ─────────────────────────────────────────────────────────────
+    'earnings_blackout_bars':   3,    # no new entry this close to results
+    'earnings_exit_buffer':     1,    # plan to be flat this many bars before them
+    'min_horizon_after_cut':    5,    # a horizon shorter than this cannot pay for a stop
+
     # ── NSE microstructure ───────────────────────────────────────────────────
     'min_median_turnover':   5.0e7,  # ₹5 crore median daily traded value
     'max_adv_participation': 0.005,  # position notional as a share of that median
@@ -306,6 +311,38 @@ def shrunk_pattern_expectancy(pattern):
     """Empirical-Bayes mean R for a pattern, shrunk toward 0 (no opinion)."""
     n, mean_r = PATTERN_PRIOR.get(pattern, (0, 0.0))
     return (n / (n + PRIOR_SHRINK_K)) * mean_r
+
+
+def apply_earnings_constraint(details, bars_to_earnings):
+    """
+    Post-hoc form of the earnings gate, for callers that learn the results date
+    AFTER the signal was generated — which live trading does, because fetching
+    a calendar for 100+ scanned symbols daily costs far more than fetching one
+    for each of the few that qualified.
+
+    Returns (details, ok, reason). Same constants as the inline gate inside
+    generate_signal, so the two paths cannot diverge on what "too close to
+    results" means; the only difference is that this one shortens the clock on
+    an already-solved trade rather than re-solving the geometry against the
+    shorter window.
+    """
+    R = RISK_PROFILE
+    if bars_to_earnings is None or bars_to_earnings < 0:
+        return details, True, None
+    if bars_to_earnings <= R['earnings_blackout_bars']:
+        return details, False, (f'results in {bars_to_earnings} session(s) — inside the '
+                                f'{R["earnings_blackout_bars"]}-bar blackout')
+    usable = int(bars_to_earnings) - R['earnings_exit_buffer']
+    if usable < R['min_horizon_after_cut']:
+        return details, False, (f'only {usable} session(s) usable before results — too short '
+                                f'a window to pay for a stop')
+    current = int(details.get('time_exit_bars') or R['min_horizon_after_cut'])
+    if usable < current:
+        details = dict(details)
+        details['time_exit_bars'] = usable
+        details['earnings_note'] = f'horizon cut {current}->{usable} bars to be flat before results'
+    details['bars_to_earnings'] = int(bars_to_earnings)
+    return details, True, None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -483,12 +520,13 @@ class SignalGenerator:
     # ─────────────────────────────────────────────────────────────────────────
     def generate_signal(self, df, symbol, fundamentals, current_equity=50000,
                         market_regime='BULL', last_exit_bar=None,
-                        benchmark_df=None, max_hold_days=15):
+                        benchmark_df=None, max_hold_days=15, bars_to_earnings=None):
         """Public entry point — evaluates the bar and tallies the funnel."""
         signal, details = self._evaluate(
             df, symbol, fundamentals, current_equity=current_equity,
             market_regime=market_regime, last_exit_bar=last_exit_bar,
             benchmark_df=benchmark_df, max_hold_days=max_hold_days,
+            bars_to_earnings=bars_to_earnings,
         )
         key = 'BUY' if signal == 'BUY' else self._funnel_key(details.get('reason', 'unknown'))
         self.funnel[key] = self.funnel.get(key, 0) + 1
@@ -496,7 +534,7 @@ class SignalGenerator:
 
     def _evaluate(self, df, symbol, fundamentals, current_equity=50000,
                   market_regime='BULL', last_exit_bar=None,
-                  benchmark_df=None, max_hold_days=15):
+                  benchmark_df=None, max_hold_days=15, bars_to_earnings=None):
         """
         Returns ('BUY', details) or ('HOLD', {'reason': ...}).
 
@@ -616,10 +654,42 @@ class SignalGenerator:
             return 'HOLD', {'reason': f'Entry quality {quality:.2f} < {required_quality:.2f} required for '
                                       f'{primary} in {market_regime}'}
 
+        # ── Gate 5b: earnings proximity ──────────────────────────────────────
+        # A results announcement is the largest overnight gap this system ever
+        # faces. Stops here sit around 2.3 sigma — roughly 4-5% of price — while
+        # an Indian midcap routinely opens 6-12% away from the prior close on
+        # results day. Holding through that replaces a measured risk with an
+        # unmeasured one on which nothing in this stack has any edge: no factor
+        # here forecasts an earnings surprise, so the position becomes a coin
+        # flip sized as though it were a 2:1 setup.
+        #
+        # Two responses, and the second is the more useful one:
+        #   • Too close to enter at all — inside the blackout, skip.
+        #   • Far enough to trade, but the planned horizon would run into the
+        #     event — shorten the horizon so the trade is planned to be FLAT
+        #     before results, then re-solve the geometry against that shorter
+        #     window. If the shortened horizon can no longer pay for a stop
+        #     that clears the noise floor, the setup is passed over rather than
+        #     taken on terms the barrier arithmetic does not support.
+        effective_horizon = int(max_hold_days)
+        earnings_note = None
+        if bars_to_earnings is not None and bars_to_earnings >= 0:
+            if bars_to_earnings <= R['earnings_blackout_bars']:
+                return 'HOLD', {'reason': f'Results in {bars_to_earnings} session(s) — '
+                                          f'inside the {R["earnings_blackout_bars"]}-bar blackout'}
+            usable = int(bars_to_earnings) - R['earnings_exit_buffer']
+            if usable < effective_horizon:
+                if usable < R['min_horizon_after_cut']:
+                    return 'HOLD', {'reason': f'Only {usable} session(s) usable before results — '
+                                              f'too short a window to pay for a stop'}
+                earnings_note = (f'horizon cut {effective_horizon}->{usable} bars to be flat '
+                                 f'before results')
+                effective_horizon = usable
+
         # ── Gate 6: barrier geometry ─────────────────────────────────────────
         geom = self._barrier_geometry(
             d, latest, entry_price, sigma_abs, sigma_d, er, primary,
-            market_regime, max_hold_days,
+            market_regime, effective_horizon,
         )
         if geom.get('reason'):
             return 'HOLD', {'reason': geom['reason']}
@@ -636,7 +706,8 @@ class SignalGenerator:
         actual_rr = (target_price - entry_price) / risk_per_share
         if actual_rr < R['min_rr']:
             return 'HOLD', {'reason': f'Reachable R:R {actual_rr:.2f} < {R["min_rr"]} within '
-                                      f'{max_hold_days} bars — the horizon cannot pay for this stop'}
+                                      f'{effective_horizon} bars — the horizon cannot pay for this stop'
+                                      + (f' ({earnings_note})' if earnings_note else '')}
 
         # A stop wider than the daily band cannot fill on the day it is
         # breached: the scrip locks at the lower circuit and the exit queues
@@ -703,6 +774,8 @@ class SignalGenerator:
             'stop_sigma_mult': round(risk_per_share / max(sigma_abs, 1e-9), 2),
             'risk_pct_of_price': round(risk_pct * 100, 2),
             'time_exit_bars': geom['time_exit_bars'],
+            'bars_to_earnings': bars_to_earnings,
+            'earnings_note': earnings_note,
             'horizon_reachable_pct': round(geom['reach_pct'] * 100, 2),
             'sigma_daily_pct': round(sigma_d * 100, 2),
             'efficiency_ratio': round(er, 3),
