@@ -1,122 +1,217 @@
-# run_backtest.py  ── PORTFOLIO BACKTEST + A/B/C VALIDATION  v5
-# ─────────────────────────────────────────────────────────────────────────────
-# v5 change — three-way comparison, not two. swing_trading_bot.py's
-# backtest_portfolio() previously had no concept of scaled exits (tranches)
-# at all — it simulated a single-exit-per-position policy that stopped being
-# what live trading actually runs the moment run_paper_trading.py v10 shipped
-# tranching. That's now fixed (see tranche_manager.py), which means this
-# script can finally ask the question that actually matters for CURRENT live
-# trading, not a stale approximation of it:
+# run_backtest.py  ── WALK-FORWARD VALIDATION OF THE DEPLOYED STACK  v6
+# ═════════════════════════════════════════════════════════════════════════════
+# v5 drove swing_trading_bot.backtest_portfolio() and compared three policies
+# (alpha on/off, tranched/untranched). That harness is now measuring a strategy
+# that no longer exists. Since it was written, live trading gained adaptive
+# barrier geometry, a chandelier trail, momentum-decay exits, per-trade
+# horizons, slot competition on forward return per slot-day, fractional Kelly
+# sizing, a regime exposure controller, next-bar fills, a cost floor, an
+# earnings blackout and T+1 settlement. backtest_portfolio models none of them.
 #
-#   RUN A — Alpha ON,  Tranched     (current live policy, exactly as deployed)
-#   RUN B — Alpha ON,  Untranched   (isolates tranching's OWN marginal effect)
-#   RUN C — Alpha OFF, Untranched   (original pre-alpha-engine baseline)
+# This is the exact failure tranche_manager.py's header already documents for
+# the tranching case — "the ONE tool meant to validate live's actual behaviour
+# was quietly testing a different, older strategy instead" — and it has
+# happened again, at a much larger scale. Running v5 today would produce
+# confident numbers about a system nobody is trading, which is worse than
+# having no backtest: it invites abandoning a change that works, or keeping one
+# that does not.
 #
-#   Compare A vs B  ->  does scaled-exit tranching actually help, holding the
-#                       alpha layer fixed?
-#   Compare B vs C  ->  does the alpha engine actually help, holding the exit
-#                       policy fixed (this is what v4 already answered)?
-#   Compare A vs C  ->  the full combined effect of both improvements over
-#                       the original untouched baseline.
+# v6 drives the REAL orchestrator (backtest_engine.WalkForwardBacktest), bar by
+# bar, against an in-memory book. Whatever comes out is what the deployed stack
+# would have done, because it is the deployed stack.
 #
-# ── Everything from v4 still applies ─────────────────────────────────────────
-#   • FULL PERFORMANCE ANALYTICS (backtest_analytics.py): Sharpe, Sortino,
-#     Calmar, max drawdown, CAGR, profit factor, expectancy — stratified by
-#     conviction tier, market regime, entry pattern, AND now tranche label
-#     (quick/core/runner/full) — so you can see e.g. whether the runner
-#     tranche is actually earning its complexity or just adding noise.
-#   • SAME UNIVERSE, CAPITAL, MAX TRADES, AND SECTOR CAP AS LIVE: imported
-#     directly from run_paper_trading.py rather than separately hardcoded
-#     values that can silently drift out of sync — which is exactly what
-#     happened to INITIAL_EQUITY/MAX_OPEN_TRADES here after a capital
-#     increase elsewhere in this project; fixed by importing instead of
-#     duplicating, the same fix already applied to SCAN_UNIVERSE in v4.
-#   • WALK-FORWARD, POINT-IN-TIME CORRECT: unchanged, still verified by
-#     test_lookahead_bias in the project's test suite.
+#   RUN D   full stack, exactly as run_paper_trading.py runs it
+#   RUN C'  identical SIGNALS, pre-upgrade POLICY: filled at the signal close,
+#           flat risk-fraction sizing, first-come-first-served slots, fixed
+#           stop and target, hard time exit, no trail, no regime gate
 #
-# ── Honest limits ────────────────────────────────────────────────────────────
-# This script has not been run against real data — the sandbox this was
-# built in has no live yfinance/NSE access. The tranche-aware mechanics were
-# validated against synthetic, deliberately-constructed price paths (see
-# test_tranche_backtest.py): tranches close independently at their own
-# targets, a loss closes every tranche together at the shared stop, and
-# use_scaled_exits=False reproduces the old untranched behaviour exactly for
-# backward compatibility. Whether tranching (or the alpha engine, or both)
-# actually add value on REAL history — and by how much — can only be
-# answered by running this against real data. Run it, read RUN A vs RUN B
-# first (that's the new question), then the rest of the comparisons below it.
-# ─────────────────────────────────────────────────────────────────────────────
+# Holding the signal source constant across both is deliberate: running the old
+# signal generator in C' as well would confound entry changes with policy
+# changes and make the delta uninterpretable. D minus C' isolates what the
+# execution, exit and allocation work actually bought.
+#
+# ── Runtime, honestly ───────────────────────────────────────────────────────
+# The orchestrator re-scans the universe on every simulated bar, and each scan
+# builds a full indicator frame per symbol. That is the price of testing the
+# real thing rather than an approximation of it, and it is not cheap:
+# roughly UNIVERSE x BARS signal evaluations, twice.
+#
+#   30 symbols x 120 bars   ~10 min    — iterate here
+#   60 symbols x 250 bars   ~1.5 hrs   — a real read
+#   100+ symbols x 350 bars ~5 hrs+    — run it overnight, once
+#
+# Start small. A clean lookahead check and a sane D-vs-C' delta on 30 symbols
+# tells you the plumbing is sound; only then spend the overnight run.
+# ═════════════════════════════════════════════════════════════════════════════
 
 import logging
+import os
+
 import pandas as pd
 
-from swing_trading_bot import SwingTradingBot
-from run_paper_trading import SCAN_UNIVERSE, INITIAL_EQUITY, MAX_OPEN_TRADES, LIVE_MAX_SECTOR_EXPOSURE
-from backtest_analytics import compute_performance_report, print_performance_report, compare_reports
+from technical_indicators import TechnicalIndicators
+from fundamental_screener import FundamentalScreener
+from signal_generator import SignalGenerator
+from data_fetcher_free import DataFetcherFree
+from backtest_engine import WalkForwardBacktest, summarise, print_comparison
+from backtest_analytics import compute_performance_report, print_performance_report
+from run_paper_trading import (SCAN_UNIVERSE, SECTOR_MAP, INITIAL_EQUITY,
+                               MAX_OPEN_TRADES, MAX_HOLD_DAYS)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-BACKTEST_DAYS   = 600       # ~2.5 years of daily data
-# INITIAL_EQUITY, MAX_OPEN_TRADES, LIVE_MAX_SECTOR_EXPOSURE imported directly
-# above rather than redefined here — see v5 changelog note.
-
-# The full live scan universe is 100+ symbols — thorough, but each symbol is
-# its own set of API calls plus per-day factor computation across ~540
-# simulated days, so this can take a while. Trim BACKTEST_STOCKS below (e.g.
-# SCAN_UNIVERSE[:30]) for a faster, smaller-sample run while iterating.
-BACKTEST_STOCKS = SCAN_UNIVERSE
+# ── Knobs ────────────────────────────────────────────────────────────────────
+UNIVERSE_LIMIT = 30          # raise once a small run looks sane; None = full universe
+HISTORY_BARS   = 420         # fetched per symbol
+WARMUP_BARS    = 300         # bars reserved for indicator warm-up; simulation starts after
+PROFILE        = 'aggressive'
+CACHE_PATH     = 'backtest_universe.pkl'   # so a re-run does not re-fetch
 
 
-def run_one(use_alpha_engine, use_scaled_exits):
-    bot = SwingTradingBot(
-        send_emails=False,
-        initial_equity=INITIAL_EQUITY,
-        max_open_trades=MAX_OPEN_TRADES,
-        max_hold_days=15,
-    )
-    trades_df = bot.backtest_portfolio(
-        BACKTEST_STOCKS, days=BACKTEST_DAYS, use_alpha_engine=use_alpha_engine,
-        use_scaled_exits=use_scaled_exits, max_sector_exposure=LIVE_MAX_SECTOR_EXPOSURE,
-    )
-    equity_df = getattr(bot, 'last_equity_curve', None)
-    report = compute_performance_report(trades_df, equity_df, INITIAL_EQUITY)
-    return trades_df, equity_df, report
+def load_universe(symbols, bars=HISTORY_BARS, use_cache=True):
+    """
+    Fetch once, cache to disk. Re-fetching 30-100 symbols on every iteration is
+    the slowest part of a short run and the most likely to be rate-limited —
+    and the data does not change between two runs on the same evening.
+    """
+    if use_cache and os.path.exists(CACHE_PATH):
+        try:
+            cached = pd.read_pickle(CACHE_PATH)
+            if set(symbols).issubset(cached['universe'].keys()):
+                logger.info(f"✓ Universe loaded from {CACHE_PATH} "
+                            f"({len(cached['universe'])} symbols)")
+                return cached['universe'], cached['index'], cached.get('vix')
+        except Exception as e:
+            logger.warning(f"  cache unreadable ({e}) — refetching")
+
+    fetcher = DataFetcherFree()
+    logger.info(f"📥 Fetching {len(symbols)} symbols x {bars} bars — this is the slow part")
+    index_df = fetcher.get_historical_data('^NSEI', days=bars + 120, min_bars=250)
+    vix_df = fetcher.get_historical_data('^INDIAVIX', days=bars + 60, min_bars=30)
+
+    universe = {}
+    for i, symbol in enumerate(symbols, 1):
+        df = fetcher.get_historical_data(symbol, days=bars, min_bars=WARMUP_BARS + 20)
+        if df is not None:
+            universe[symbol] = df
+        if i % 10 == 0:
+            logger.info(f"  {i}/{len(symbols)} fetched, {len(universe)} usable")
+
+    try:
+        pd.to_pickle({'universe': universe, 'index': index_df, 'vix': vix_df}, CACHE_PATH)
+    except Exception as e:
+        logger.warning(f"  could not cache universe ({e})")
+    return universe, index_df, vix_df
 
 
 if __name__ == "__main__":
-    print("\n" + "=" * 70)
-    print("NSE SWING TRADING BOT — PORTFOLIO BACKTEST + ALPHA/TRANCHE A/B/C  v5")
-    print(f"Universe: {len(BACKTEST_STOCKS)} symbols | Days: {BACKTEST_DAYS} | "
-          f"Initial equity: ₹{INITIAL_EQUITY:,} | Max trades: {MAX_OPEN_TRADES}")
-    print("=" * 70)
+    symbols = SCAN_UNIVERSE[:UNIVERSE_LIMIT] if UNIVERSE_LIMIT else SCAN_UNIVERSE
+    universe, index_df, vix_df = load_universe(symbols)
 
-    print("\n\n########## RUN A: ALPHA ON, TRANCHED (current live policy) ##########")
-    trades_a, equity_a, report_a = run_one(use_alpha_engine=True, use_scaled_exits=True)
-    print_performance_report(report_a, title="RUN A — ALPHA ON, TRANCHED (current live policy)")
+    if index_df is None or len(universe) < 10:
+        logger.error(f"✗ Only {len(universe)} symbols and "
+                     f"{'no' if index_df is None else 'an'} index — too thin to measure breadth "
+                     f"against, let alone draw a conclusion from. Aborting.")
+        raise SystemExit(1)
 
-    print("\n\n########## RUN B: ALPHA ON, UNTRANCHED (isolates tranching's own effect) ##########")
-    trades_b, equity_b, report_b = run_one(use_alpha_engine=True, use_scaled_exits=False)
-    print_performance_report(report_b, title="RUN B — ALPHA ON, UNTRANCHED")
+    if len(universe) < 20:
+        logger.warning(f"  ⚠ {len(universe)} symbols is below BreadthPanel's 20-symbol minimum: "
+                       f"breadth is withheld, the regime engine runs on index and volatility "
+                       f"alone, and its conclusions are correspondingly weaker. Raise "
+                       f"UNIVERSE_LIMIT before reading the comparison as a verdict.")
 
-    print("\n\n########## RUN C: ALPHA OFF, UNTRANCHED (original baseline) ##########")
-    trades_c, equity_c, report_c = run_one(use_alpha_engine=False, use_scaled_exits=False)
-    print_performance_report(report_c, title="RUN C — ALPHA OFF, UNTRANCHED (original baseline)")
+    fundamentals = {}
+    fetcher = DataFetcherFree()
+    for symbol in universe:
+        try:
+            f = fetcher.get_fundamentals(symbol) or {}
+        except Exception:
+            f = {}
+        f['sector'] = SECTOR_MAP.get(symbol, 'UNKNOWN')
+        fundamentals[symbol] = f
 
-    compare_reports(report_a, report_b, label_a="A: Alpha ON + Tranched", label_b="B: Alpha ON + Untranched")
-    compare_reports(report_b, report_c, label_a="B: Alpha ON + Untranched", label_b="C: Alpha OFF + Untranched (baseline)")
-    compare_reports(report_a, report_c, label_a="A: Current live policy", label_b="C: Original baseline")
+    def make_signal_gen():
+        screener = FundamentalScreener()
+        # Sector P/E is calibrated once from the same fundamentals the run will
+        # see, so pe_check compares against the peer group rather than the
+        # placeholder 25 — matching what run_paper_trading does each morning.
+        try:
+            screener.calibrate_sector_pe(fundamentals, SECTOR_MAP)
+        except AttributeError:
+            pass
+        return SignalGenerator(TechnicalIndicators(), screener)
 
-    for name, df in [('a', trades_a), ('b', trades_b), ('c', trades_c)]:
-        if df is not None and len(df) > 0:
-            df.to_csv(f'backtest_results_run_{name}.csv', index=False)
-            print(f"✓ Run {name.upper()} trades saved to backtest_results_run_{name}.csv")
-    if equity_a is not None and len(equity_a) > 0:
-        equity_a.to_csv('backtest_equity_curve_run_a.csv', index=False)
+    wf = WalkForwardBacktest(make_signal_gen, SECTOR_MAP, INITIAL_EQUITY, PROFILE)
 
-    print("\nRead A vs B FIRST — that's the new question this version answers: does scaled-exit")
-    print("tranching (run_paper_trading.py's biggest recent change) actually help, holding the alpha")
-    print("layer constant? Then B vs C for the alpha engine's own effect (unchanged from before).")
-    print("Then check the 'Stratified by Tranche' section of RUN A specifically: if 'runner' isn't")
-    print("outperforming 'quick'/'core' on average, the piece designed to capture outsized moves")
-    print("isn't earning its complexity, even if the overall A vs B numbers look fine otherwise.")
+    print("\n" + "=" * 78)
+    print("NSE SWING TRADING BOT — WALK-FORWARD VALIDATION  v6")
+    print(f"Universe: {len(universe)} symbols | bars {WARMUP_BARS}→{HISTORY_BARS} "
+          f"| equity ₹{INITIAL_EQUITY:,} | slots {MAX_OPEN_TRADES} | hold {MAX_HOLD_DAYS}")
+    print("=" * 78)
+
+    # ── Lookahead first ──────────────────────────────────────────────────────
+    # Before any number is worth reading. A harness that cannot prove this is
+    # measuring its own bugs, and every conclusion below inherits them.
+    check = wf.assert_no_lookahead(universe, index_df, fundamentals,
+                                   bar=WARMUP_BARS, sample=10)
+    print(f"\nLookahead check: {'CLEAN' if check['clean'] else 'FAILED'} "
+          f"({check['checked']} symbols)")
+    if not check['clean']:
+        for sym, a, b in check['mismatches']:
+            print(f"   ✗ {sym}: sliced {a} vs truncated {b}")
+        print("   Decisions differ when future bars are physically removed — something "
+              "downstream reads past its slice. Fix that before trusting anything below.")
+        raise SystemExit(1)
+
+    # ── Run D ────────────────────────────────────────────────────────────────
+    print("\n\n########## RUN D — FULL STACK (current live policy) ##########")
+    trades_d, equity_d = wf.run_stack(universe, index_df, vix_df=vix_df,
+                                      fundamentals=fundamentals, start=WARMUP_BARS,
+                                      base_slots=MAX_OPEN_TRADES,
+                                      max_hold_days=MAX_HOLD_DAYS, tag='D')
+
+    # ── Run C' ───────────────────────────────────────────────────────────────
+    print("\n\n########## RUN C' — SAME SIGNALS, PRE-UPGRADE POLICY ##########")
+    trades_c, equity_c = wf.run_legacy(universe, index_df, fundamentals=fundamentals,
+                                       start=WARMUP_BARS, max_slots=MAX_OPEN_TRADES,
+                                       max_hold_days=15, tag='C')
+
+    # ── Reports ──────────────────────────────────────────────────────────────
+    print_performance_report(
+        compute_performance_report(trades_d, equity_d, INITIAL_EQUITY),
+        title="RUN D — FULL STACK")
+    print_performance_report(
+        compute_performance_report(trades_c, equity_c, INITIAL_EQUITY),
+        title="RUN C' — PRE-UPGRADE POLICY, SAME SIGNALS")
+    print_comparison(summarise(trades_d, equity_d, INITIAL_EQUITY, "RUN D full stack"),
+                     summarise(trades_c, equity_c, INITIAL_EQUITY, "RUN C' legacy policy"))
+
+    # ── The breakdowns that say WHY, not just how much ───────────────────────
+    if trades_d is not None and len(trades_d):
+        print("  Exit reasons (D):", trades_d['exit_reason'].value_counts().to_dict())
+        if 'market_state_at_entry' in trades_d:
+            by_state = trades_d.groupby('market_state_at_entry', dropna=False)['net_pnl'].agg(
+                ['count', 'sum', 'mean']).round(2)
+            print("\n  P&L by market state at entry — does the regime gate earn its keep?")
+            print(by_state.to_string())
+        if 'quality_score' in trades_d and trades_d['quality_score'].notna().any():
+            q = trades_d.dropna(subset=['quality_score']).copy()
+            q['band'] = pd.qcut(q['quality_score'].astype(float), 3,
+                                labels=['low', 'mid', 'high'], duplicates='drop')
+            print("\n  P&L by entry-quality band — is quality_score predictive at all?")
+            print(q.groupby('band', observed=True)['net_pnl'].agg(
+                ['count', 'mean', lambda s: (s > 0).mean()]).round(3).to_string())
+
+    for tag, df in (('d', trades_d), ('c', trades_c)):
+        if df is not None and len(df):
+            df.to_csv(f'backtest_results_run_{tag}.csv', index=False)
+    if equity_d is not None and len(equity_d):
+        equity_d.to_csv('backtest_equity_curve_run_d.csv', index=False)
+
+    print("\nRead D vs C' first — that is the whole question this file exists to answer:")
+    print("did the execution, exit and allocation work pay for itself on real history?")
+    print("Then the quality-band table: if expectancy does not rise with quality_score,")
+    print("the EV gate and Kelly sizing are both being driven by a number with no signal,")
+    print("and calibration.py has nothing to learn from. That is the single most")
+    print("important diagnostic in this output.")
