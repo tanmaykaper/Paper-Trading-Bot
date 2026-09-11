@@ -285,9 +285,10 @@ class MarketState:
         elif self.clamp_active:
             self.cooldown_left -= 1
             self.quiet_bars += 1
-            pct20 = float(breadth['pct_above_20']) if breadth is not None else 0.0
+            have_breadth = breadth is not None
+            pct20 = float(breadth['pct_above_20']) if have_breadth else 0.0
             # Primary release: participation has genuinely rebuilt.
-            breadth_ok = pct20 >= P['recovery_breadth']
+            breadth_ok = have_breadth and pct20 >= P['recovery_breadth']
             # Alternate release: participation is only partway back, but the
             # weighted score has independently reclaimed risk-on AND nothing has
             # triggered for several sessions. This is a second, different piece
@@ -298,9 +299,18 @@ class MarketState:
             # for 30 sessions in testing, roughly ten of which the market spent
             # recovering. Being late back in is a real cost, just a smaller one
             # than being early.
-            alt_ok = (pct20 >= P['recovery_breadth_alt']
-                      and risk_score >= P['risk_on_threshold']
-                      and self.quiet_bars >= P['recovery_quiet_bars'])
+            # When breadth is unavailable entirely — a universe under
+            # min_symbols, or a degraded fetch — the breadth conditions can
+            # NEVER be satisfied, and a clamp entered on an index or VIX
+            # trigger would hold forever. Found by a smoke test on a 12-symbol
+            # universe, where the book stayed DEFENSIVE for the whole run and
+            # took zero trades. The alternate path drops the breadth term in
+            # that case and leans on the evidence that IS available: a risk
+            # score that has independently reclaimed risk-on, held quiet for
+            # several sessions. Absent data must not become a permanent verdict.
+            alt_ok = (risk_score >= P['risk_on_threshold']
+                      and self.quiet_bars >= P['recovery_quiet_bars']
+                      and (not have_breadth or pct20 >= P['recovery_breadth_alt']))
             if self.cooldown_left <= 0 and (breadth_ok or alt_ok):
                 self.clamp_active = False
 
