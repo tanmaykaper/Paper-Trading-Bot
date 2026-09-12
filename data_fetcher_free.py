@@ -72,7 +72,7 @@ _ORDINARY_RANGE = 0.08         # a bar whose own high-low range is under this di
                                # trade through the move it appears to have made
 
 
-def _sanitize_ohlcv(df, symbol):
+def _sanitize_ohlcv(df, symbol, check_actions=True):
     """
     Returns (clean_df, notes). Never raises: a frame that cannot be repaired is
     returned with its problems described, and the caller decides.
@@ -124,6 +124,8 @@ def _sanitize_ohlcv(df, symbol):
         return d, notes
 
     # ── 3. Corporate actions ─────────────────────────────────────────────────
+    if not check_actions:
+        return d, notes
     close = d['close'].astype(float)
     prev = close.shift()
     ratio = close / prev
@@ -306,7 +308,10 @@ class DataFetcherFree:
             # retained window still shifts the price level inside it, so the
             # check has to see the whole fetched history, not the slice that
             # survives.
-            df, notes = _sanitize_ohlcv(df, symbol)
+            # Indices and the VIX have no corporate actions, and the VIX
+            # genuinely moves >22% in a session — running the split detector
+            # over them only produces false warnings.
+            df, notes = _sanitize_ohlcv(df, symbol, check_actions=not symbol.startswith('^'))
             for note in notes:
                 logger.warning(f"  🧹 {symbol}: {note}")
 
