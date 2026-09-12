@@ -48,7 +48,7 @@ def _parse_date(val):
 _STACK_COLS = [
     'quality_score', 'p_win_est', 'time_exit_bars', 'entry_adx', 'highest_high',
     'health_signals_at_exit', 'entry_slippage_pct', 'market_state_at_entry',
-    'bars_held',
+    'bars_held', 'pyramid_adds',
 ]
 
 
@@ -276,7 +276,13 @@ class PaperTradingManager:
                    position_size, entry_type, confidence=None, risk_reward_ratio=None,
                    alpha_score=None, alpha_tier=None,
                    sentiment_score=None, sentiment_tier=None, tranches=None,
-                   extra_fields=None):
+                   extra_fields=None, allow_add=False):
+        # allow_add exists for pyramiding: profit_engine adds a SECOND unit to a
+        # position that has proved itself, which is a legitimate duplicate on the
+        # same symbol. The guard still blocks the accidental case — two
+        # independent signals opening the same name twice — because that is a
+        # concentration error, while a pyramid add is a sized, risk-reduced
+        # extension of a position that already exists.
         """
         Open a new paper trade with capital and slot checks.
         Automatically reduces position size to fit available free cash.
@@ -324,7 +330,7 @@ class PaperTradingManager:
         try:
             df = self._load_csv()
 
-            if symbol in df[df['status'] == 'OPEN']['symbol'].values:
+            if symbol in df[df['status'] == 'OPEN']['symbol'].values and not allow_add:
                 logger.warning(f"⚠️ {symbol} already has open trade — skipping")
                 return False
 
