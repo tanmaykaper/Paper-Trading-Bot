@@ -48,6 +48,8 @@ from portfolio_allocator import PortfolioAllocator, print_plan
 from exit_manager import ExitEngine
 from entry_execution import PendingOrders, route, enrich_signal_bar
 from calibration import WinCalibrator, refresh_from_csv
+from meta_model import MetaModel, refresh_meta_model
+from profit_engine import ProfitEngine
 from data_fetcher_free import data_quality
 
 logging.basicConfig(level=logging.INFO)
@@ -62,7 +64,29 @@ STATE_JSON = 'orchestrator_state.json'
 # against it unchanged.
 EXTRA_COLUMNS = ['quality_score', 'p_win_est', 'time_exit_bars', 'entry_adx',
                  'highest_high', 'health_signals_at_exit', 'entry_slippage_pct',
-                 'market_state_at_entry']
+                 'market_state_at_entry', 'bars_held', 'pyramid_adds']
+
+
+class _ProbabilityChain:
+    """
+    Presents the calibrator's interface to signal_generator while routing the
+    estimate through both learned layers. A single object rather than two
+    hooks, because signal_generator should not have to know how many stages
+    the probability estimate passes through — only that it gets one.
+    """
+
+    def __init__(self, calibrator, meta):
+        self.calibrator = calibrator
+        self.meta = meta
+
+    def p_win(self, quality, prior, details=None):
+        p = self.calibrator.p_win(quality, prior)
+        if details is not None:
+            p = self.meta.p_win(details, p)
+        return p
+
+    def __getattr__(self, item):          # n_trades, brier_model, reliability(), ...
+        return getattr(self.calibrator, item)
 
 
 def _value(obj, name, *args, default=None):
@@ -151,10 +175,17 @@ class TradingOrchestrator:
         self.exits = ExitEngine(profile)
         self.alloc = PortfolioAllocator(profile, self.sector_map)
         self.calibrator = WinCalibrator()
+        self.meta = MetaModel()
+        self.profit = ProfitEngine(profile)
         self.funnel_extra = {}
-        # Hand the calibrated map to the signal generator, so the EV gate and
-        # Kelly both read measured probability rather than the asserted tilt.
-        self.sig.calibrator = self.calibrator
+        # Hand the probability chain to the signal generator, so the EV gate
+        # and Kelly both read measured probability rather than an asserted
+        # tilt. The chain is deliberately layered: the geometry-derived prior
+        # is corrected by the calibrator (quality -> outcome), then by the meta
+        # model (full feature vector -> outcome). Each layer is inert until it
+        # has demonstrated out-of-sample skill, so the chain degrades cleanly
+        # to exactly today's behaviour on day one.
+        self.sig.calibrator = _ProbabilityChain(self.calibrator, self.meta)
 
     # ─────────────────────────────────────────────────────────────────────────
     def run(self, universe_dfs, index_df, vix_df=None, fundamentals=None,
@@ -227,6 +258,22 @@ class TradingOrchestrator:
         incumbents = self._incumbents(open_trades, universe_dfs, prices)
         cash, equity = self._capital(prices)
         cash -= self.pending.reserved_capital()
+
+        # Equity-curve scaling: trade larger while the strategy is in phase
+        # with the market and smaller while it is not. Withheld until there
+        # are enough closed trades for the curve to describe the strategy
+        # rather than a handful of marks.
+        closed = None
+        try:
+            closed = pd.read_csv(self.trades_csv)
+            closed = closed[closed['status'] == 'CLOSED']
+        except Exception:
+            pass
+        curve_scalar, curve_detail = self.profit.risk_scalar(
+            self._equity_history(), closed)
+        report['risk_scalar'] = curve_detail
+        base_lambda = self.alloc.P['kelly_lambda']
+        self.alloc.P['kelly_lambda'] = base_lambda * curve_scalar
         plan = self.alloc.plan(
             candidates, incumbents, equity=equity, cash_available=max(cash, 0.0),
             peak_equity=self._peak_equity(equity), max_slots=ms['max_slots'],
@@ -251,13 +298,64 @@ class TradingOrchestrator:
         report['placed'] = placed
         report['plan'] = plan
 
+        self.alloc.P['kelly_lambda'] = base_lambda      # restore; scaling is per-run
+
+        # ── 6b. Pyramiding ───────────────────────────────────────────────────
+        report['pyramids'] = self._pyramid(incumbents, plan, equity, cash, ms)
+
+        report['engines'] = {
+            'risk_scalar': report.get('risk_scalar'),
+            'meta': self.meta.report().split('\n')[1].strip() if self.meta else None,
+            'pyramids': report.get('pyramids'),
+            'ladder': self.profit.ladder(equity)['note'],
+        }
+
         # ── 7. Learn, then persist ───────────────────────────────────────────
         self.calibrator = refresh_from_csv(self.trades_csv)
-        self.sig.calibrator = self.calibrator
+        self.meta = refresh_meta_model(self.trades_csv)
+        self.sig.calibrator = _ProbabilityChain(self.calibrator, self.meta)
         self._save_state()
         return report
 
     # ═════════════════════════════════════════════════════════════════════════
+    def _pyramid(self, incumbents, plan, equity, cash, ms):
+        """
+        Add to positions that have proved themselves, funding the add out of
+        profit already banked rather than out of new risk. Run after allocation
+        so it competes for the cash that is genuinely left, and never ahead of
+        a fresh candidate that the allocator ranked higher.
+        """
+        added = []
+        spare = max(cash - sum(e['econ']['notional'] for e in plan.get('entries', [])), 0.0)
+        heat_room = plan['diagnostics'].get('heat_room_remaining', 0.0)
+        for inc in incumbents:
+            decision = self.profit.pyramid(inc['trade'], inc['price'], equity, spare,
+                                           heat_room, inc.get('evaluation'), ms)
+            if not decision['add']:
+                continue
+            ok = self.mgr.open_trade(
+                inc['symbol'], inc['price'], decision['new_stop'],
+                float(inc['trade']['target_price']), decision['size'],
+                f"pyramid_{inc['trade'].get('entry_type', 'add')}", allow_add=True)
+            if not ok:
+                continue
+            self._patch_rows({inc['trade'].get('trade_id'): {
+                'stop_loss': decision['new_stop'],
+                'pyramid_adds': _bars_held({'bars_held': inc['trade'].get('pyramid_adds')}) + 1}})
+            spare -= decision['size'] * inc['price']
+            heat_room -= decision['added_risk']
+            added.append((inc['symbol'], decision['size'], decision['reason']))
+            logger.info(f"  ⬆ {inc['symbol']}: {decision['reason']}")
+        return added
+
+    def _equity_history(self, path='daily_equity.csv'):
+        try:
+            eq = pd.read_csv(path)
+            col = 'equity' if 'equity' in eq.columns else eq.columns[-1]
+            return eq[col].astype(float)
+        except (OSError, ValueError, KeyError):
+            return None
+
     def _process_exits(self, universe_dfs, prices, earnings_bars=None):
         out = {'closed': [], 'trailed': []}
         df = self._open_trades()
