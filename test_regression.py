@@ -204,6 +204,9 @@ def test_calibration_and_data():
         d.loc[40:, col] = d.loc[40:, col] / 5.0
     raw = float((d.close / d.close.shift() - 1).abs().max())
     clean, notes = _sanitize_ohlcv(d, 'SPLIT')
+    unchecked, _ = _sanitize_ohlcv(d.copy(), '^NSEI', check_actions=False)
+    check("indices are exempt from split detection",
+          abs(float(unchecked.close.iloc[0]) - float(d.close.iloc[0])) < 1e-9)
     check("a corporate action is back-adjusted, not treated as a real move",
           float((clean.close / clean.close.shift() - 1).abs().max()) < 0.10,
           f"raw {raw*100:.0f}% → {float((clean.close/clean.close.shift()-1).abs().max())*100:.1f}%")
@@ -248,6 +251,42 @@ def test_manager():
           row['market_state_at_entry'] == 'RISK_ON')
     check("extra fields persist through open_trade",
           float(row['quality_score']) == 0.81 and float(row['time_exit_bars']) == 7)
+
+    # The incident that killed the first live run: get_open_trades() returns
+    # list-of-dicts while get_closed_trades() returns a DataFrame, and the
+    # orchestrator called .iterrows() on the records.
+    from orchestrator import _as_frame, _bars_held
+    raw = m.get_open_trades()
+    check("get_open_trades returns records, not a DataFrame",
+          not isinstance(raw, pd.DataFrame), type(raw).__name__)
+    frame = _as_frame(raw)
+    check("the orchestrator normalises records into a DataFrame",
+          isinstance(frame, pd.DataFrame) and hasattr(frame, 'iterrows') and len(frame) == 1)
+    check("numeric columns survive the records round trip",
+          float(frame['entry_price'].iloc[0]) == 100.0
+          and float(frame['time_exit_bars'].iloc[0]) == 7)
+    check("_as_frame tolerates None and empty input",
+          len(_as_frame(None)) == 0 and len(_as_frame([])) == 0)
+    check("bars_held is preferred over calendar hold_days",
+          _bars_held({'bars_held': 6, 'hold_days': 9}) == 6
+          and _bars_held({'hold_days': 9}) == 9 and _bars_held({}) == 0)
+
+    # The incident one crash later: free_cash and current_equity are @property
+    # on the live manager and methods on SimulatedBook, and current_equity is a
+    # backward-compat ALIAS for free_cash — not equity.
+    from orchestrator import _value
+    check("accessors resolve whether property or method",
+          _value(m, 'free_cash') is not None
+          and _value(type('M', (), {'free_cash': lambda s: 7.0})(), 'free_cash') == 7.0)
+    check("a missing accessor returns the default, not an exception",
+          _value(m, 'no_such_thing', default='ok') == 'ok')
+
+    o2 = TradingOrchestrator.__new__(TradingOrchestrator)
+    o2.mgr = m
+    cash, equity = o2._capital({'AAA': 104.0})
+    check("equity is total portfolio value, not uninvested cash",
+          equity > cash and abs(equity - 50000) < 500,
+          f"cash ₹{cash:,.0f} vs equity ₹{equity:,.0f}")
 
     # The incident: hold time counted in calendar days against a bar threshold.
     for _ in range(7):
