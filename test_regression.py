@@ -297,12 +297,172 @@ def test_manager():
           f"{closed['exit_reason']} at {closed['bars_held']} bars")
 
 
+
+# ═══ 7. Profit engine ════════════════════════════════════════════════════════
+def test_profit_engine():
+    print("\n[profit engine]")
+    from profit_engine import equity_curve_scalar, evaluate_pyramid, compounding_ladder
+
+    rng = np.random.default_rng(1)
+    up = pd.Series(50000 * np.exp(np.cumsum(rng.normal(0.0015, 0.004, 60))))
+    down = pd.Series(50000 * np.exp(np.cumsum(rng.normal(-0.0015, 0.004, 60))))
+    s_up, s_down = equity_curve_scalar(up)[0], equity_curve_scalar(down)[0]
+    check("risk scales up in phase and down out of phase", s_up > 1.0 > s_down,
+          f"{s_up:.2f} vs {s_down:.2f}")
+    check("the scalar is bounded, never off and never leveraged",
+          0.5 < s_down and s_up < 1.4)
+    check("no opinion on a short equity history",
+          equity_curve_scalar(pd.Series([50000] * 8))[0] == 1.0)
+
+    trade = {'entry_price': 500., 'initial_stop_loss': 476., 'stop_loss': 492.,
+             'position_size': 40, 'target_price': 560., 'entry_type': 'pullback'}
+    healthy = {'health': {'n_signals': 0}, 'stagnant': False}
+    allow = {'new_entries_allowed': True}
+    d = evaluate_pyramid(trade, 530.0, 52000, 26000, 6000, healthy, allow)
+    check("a proved winner is added to", d['add'], d['reason'][:60])
+
+    # The property that separates pyramiding from averaging up.
+    if d['add']:
+        before = 40 * 24.0
+        after = 40 * max(500 - d['new_stop'], 0) + d['size'] * (530 - d['new_stop'])
+        check("total open risk FALLS after the add", after <= before,
+              f"₹{before:,.0f} → ₹{after:,.0f}")
+        check("the stop moves above entry, covering costs", d['new_stop'] > 500)
+
+    for label, ev, ms in (("broken thesis", {'health': {'n_signals': 2}, 'stagnant': False}, allow),
+                          ("stagnant", {'health': {'n_signals': 0}, 'stagnant': True}, allow),
+                          ("entries suspended", healthy, {'new_entries_allowed': False,
+                                                          'state': 'DEFENSIVE'})):
+        check(f"no add when {label}",
+              not evaluate_pyramid(trade, 530.0, 52000, 26000, 6000, ev, ms)['add'])
+    check("no add below the trigger",
+          not evaluate_pyramid(trade, 505.0, 52000, 26000, 6000, healthy, allow)['add'])
+    check("NaN in the add counter does not raise",
+          isinstance(evaluate_pyramid({**trade, 'pyramid_adds': float('nan')}, 530.0,
+                                      52000, 26000, 6000, healthy, allow)['add'], bool))
+
+    small, large = compounding_ladder(50000), compounding_ladder(300000)
+    check("the ladder widens the book as capital grows",
+          large['recommended_slots'] > small['recommended_slots']
+          and large['max_capital_pct'] < small['max_capital_pct'],
+          f"{small['recommended_slots']}→{large['recommended_slots']} slots")
+
+
+# ═══ 8. Meta model ═══════════════════════════════════════════════════════════
+def _meta_trades(n, signal=True, seed=1):
+    r = np.random.default_rng(seed)
+    q = r.uniform(0.40, 0.95, n)
+    er = r.uniform(0.08, 0.65, n)
+    adx = r.uniform(12, 45, n)
+    base = 0.42 + (0.45 * (q - 0.65) + 0.35 * (er - 0.35)) if signal else np.full(n, 0.42)
+    win = r.random(n) < np.clip(base, 0.08, 0.85)
+    return pd.DataFrame({
+        'status': 'CLOSED', 'entry_date': pd.bdate_range('2025-01-01', periods=n),
+        'exit_date': pd.bdate_range('2025-01-10', periods=n), 'quality_score': q,
+        'p_win_est': np.clip(0.34 + 0.08 * (q - 0.6), 0.05, 0.9), 'efficiency_ratio': er,
+        'risk_pct_of_price': r.uniform(2.5, 6, n), 'stop_sigma_mult': r.uniform(1.5, 2.6, n),
+        'risk_reward_ratio': r.uniform(1.5, 2.6, n), 'sigma_daily_pct': r.uniform(1.0, 2.6, n),
+        'time_exit_bars': r.integers(6, 18, n), 'confidence': r.integers(1, 4, n),
+        'band_usage': r.uniform(0, 0.5, n), 'gap_down_p90': r.uniform(0.005, 0.02, n),
+        'entry_price': r.uniform(200, 1500, n), 'position_size': r.integers(8, 40, n),
+        'ind_rsi': r.uniform(40, 75, n), 'ind_adx': adx, 'ind_plus_di': adx * 0.8,
+        'ind_minus_di': adx * 0.4, 'ind_cmf': r.uniform(-0.1, 0.3, n),
+        'ind_extension_atr': r.uniform(0, 3, n), 'ind_stoch_k': r.uniform(20, 90, n),
+        'entry_type': r.choice(['pullback', 'breakout', 'cmf_accum'], n),
+        'market_state_at_entry': r.choice(['RISK_ON', 'NEUTRAL'], n),
+        'net_pnl': np.where(win, r.uniform(300, 1500, n), -r.uniform(250, 850, n))})
+
+
+def test_meta_model():
+    print("\n[meta model]")
+    from meta_model import MetaModel
+
+    thin = MetaModel('/tmp/_t_meta_thin.json').fit(_meta_trades(40, True, 5))
+    check("inert on thin data", not thin.active)
+    check("thin model returns the prior untouched",
+          all(abs(thin.p_win({'quality_score': q}, p) - p) < 1e-12
+              for q in (0.4, 0.9) for p in (0.30, 0.45)))
+
+    noise = MetaModel('/tmp/_t_meta_noise.json').fit(_meta_trades(400, False, 2))
+    check("refuses to activate on data with no signal", not noise.active,
+          f"OOS AUC {noise.oos_auc}")
+
+    real = MetaModel('/tmp/_t_meta_real.json').fit(_meta_trades(600, True, 3))
+    check("activates when out-of-sample skill is demonstrated", real.active,
+          f"AUC {real.oos_auc}, Brier {real.oos_brier} vs prior {real.prior_brier}")
+    if real.active:
+        strong = {'quality_score': 0.92, 'efficiency_ratio': 0.60, 'p_win_est': 0.40,
+                  'risk_reward_ratio': 2.4, 'entry_type': 'pullback',
+                  'market_state_at_entry': 'RISK_ON',
+                  'indicators': {'rsi': 62, 'adx': 38, 'plus_di': 30, 'minus_di': 10,
+                                 'stoch_k': 70, 'extension_atr': 0.8}}
+        weak = {'quality_score': 0.45, 'efficiency_ratio': 0.12, 'p_win_est': 0.32,
+                'risk_reward_ratio': 1.6, 'entry_type': 'breakout',
+                'market_state_at_entry': 'NEUTRAL',
+                'indicators': {'rsi': 52, 'adx': 15, 'plus_di': 16, 'minus_di': 14,
+                               'stoch_k': 30, 'extension_atr': 2.6}}
+        p_hi, p_lo = real.p_win(strong, 0.36), real.p_win(weak, 0.36)
+        check("strong and weak setups separate", p_hi > p_lo + 0.05,
+              f"{p_hi:.3f} vs {p_lo:.3f}")
+        check("the blend never replaces the geometry outright",
+              0.5 * 0.36 <= p_lo and p_hi <= 1.6 * 0.36 + 1e-9)
+        reloaded = MetaModel('/tmp/_t_meta_real.json')
+        check("the fitted model round-trips through disk",
+              reloaded.active and abs(reloaded.p_win(strong, 0.36) - p_hi) < 1e-9)
+
+
+# ═══ 9. Optimiser ════════════════════════════════════════════════════════════
+def test_optimizer():
+    print("\n[optimiser]")
+    import signal_generator as sg
+    from optimizer import WalkForwardOptimizer, SEARCH_SPACE, apply_params, restore_params
+
+    before = sg.RISK_PROFILE['k_stop_base']
+    prev = apply_params({'k_stop_base': 9.99})
+    changed = sg.RISK_PROFILE['k_stop_base'] == 9.99
+    restore_params(prev)
+    check("parameters are applied to and restored from the live profile",
+          changed and sg.RISK_PROFILE['k_stop_base'] == before)
+
+    index = pd.DataFrame({'datetime': pd.bdate_range('2024-01-01', periods=600),
+                          'close': np.linspace(100, 130, 600)})
+    universe = {f'S{i}': index.copy() for i in range(20)}
+
+    def surrogate(strength):
+        def fn(u, idx, f, start, end):
+            r = np.random.default_rng(int(start * 7919 + end))
+            n = max(int((end - start) * 0.30), 0)
+            if n < 5:
+                return pd.DataFrame(columns=['net_pnl', 'hold_days', 'exit_date'])
+            k, rr = sg.RISK_PROFILE['k_stop_base'], sg.RISK_PROFILE['min_rr']
+            edge = strength * (1.0 - abs(k - 1.50) * 2.2 - abs(rr - 1.50) * 1.6)
+            dates = pd.to_datetime(idx['datetime']).iloc[start:end]
+            return pd.DataFrame({'net_pnl': r.normal(edge * 260, 900, n),
+                                 'hold_days': r.integers(5, 16, n),
+                                 'exit_date': r.choice(dates, n)})
+        return fn
+
+    space = {k: SEARCH_SPACE[k] for k in ('k_stop_base', 'min_rr', 'kelly_lambda')}
+    real = WalkForwardOptimizer(surrogate(1.0), 50000., space, 4, 27).run(universe, index, {}, 200)
+    check("recovers a known optimum", real['best_params']['k_stop_base'] == 1.50
+          and real['best_params']['min_rr'] == 1.50, str(real['best_params']))
+    check("deploys when out-of-sample is positive and stable",
+          real['verdict'] == 'DEPLOY', f"OOS {real['oos_mean_bps_per_slot_day']}")
+
+    noise = WalkForwardOptimizer(surrogate(0.0), 50000., space, 4, 27).run(universe, index, {}, 200)
+    check("holds on a surface with no real edge", noise['verdict'] == 'HOLD',
+          noise['reasons'][0][:60])
+    check("the live profile is left untouched by a search",
+          sg.RISK_PROFILE['k_stop_base'] == before)
+
+
 if __name__ == "__main__":
     print("=" * 66)
     print("  v11 REGRESSION SUITE — invariants, each with an incident behind it")
     print("=" * 66)
     for fn in (test_costs, test_exits, test_signals, test_allocation,
-               test_calibration_and_data, test_manager):
+               test_calibration_and_data, test_manager, test_profit_engine,
+               test_meta_model, test_optimizer):
         try:
             fn()
         except Exception as e:
