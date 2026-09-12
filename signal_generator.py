@@ -725,7 +725,20 @@ class SignalGenerator:
             return 'HOLD', {'reason': f'Sizing collapsed to zero shares ({size_note})'}
 
         # ── Gate 8: economics ────────────────────────────────────────────────
-        p_win = self._win_probability(risk_per_share, target_price - entry_price, quality)
+        # The meta model reads the full feature vector, so it is given the
+        # signal as it stands at this point rather than just the scalar quality.
+        _partial = {'quality_score': quality, 'entry_type': primary,
+                    'risk_pct_of_price': risk_pct * 100, 'risk_reward_ratio': actual_rr,
+                    'sigma_daily_pct': sigma_d * 100, 'efficiency_ratio': er,
+                    'time_exit_bars': geom['time_exit_bars'],
+                    'stop_sigma_mult': risk_per_share / max(sigma_abs, 1e-9),
+                    'quality_breakdown': q_parts, 'confidence': len(active_patterns),
+                    'indicators': {'rsi': rsi, 'adx': adx, 'plus_di': plus_di,
+                                   'minus_di': minus_di,
+                                   'extension_atr': extension_atr},
+                    'market_state_at_entry': market_regime}
+        p_win = self._win_probability(risk_per_share, target_price - entry_price,
+                                      quality, _partial)
         min_notional = FLAT_CHARGE_PER_SELL / (R['max_flat_cost_bps'] / 1e4)
 
         provisional = {
@@ -1123,7 +1136,7 @@ class SignalGenerator:
                 'capital cap' if binding == size_by_capital else 'ADV participation')
         return int(binding), f'{note}, quality scalar {quality_scalar:.2f}'
 
-    def _win_probability(self, risk_per_share, reward_per_share, quality):
+    def _win_probability(self, risk_per_share, reward_per_share, quality, details=None):
         """
         Start from the driftless two-barrier result — P(touch +b before -a) =
         a/(a+b) — which is the correct no-edge baseline and makes every
@@ -1141,7 +1154,21 @@ class SignalGenerator:
             return 0.0
         p_base = a / (a + b)
         tilt = 1.0 + self.R['edge_tilt'] * (quality - 0.5) * 2.0
-        return float(np.clip(p_base * tilt, 0.05, 0.85))
+        prior = float(np.clip(p_base * tilt, 0.05, 0.85))
+
+        # The learned layers correct this when, and only when, they have
+        # demonstrated out-of-sample skill. Until then every one of them
+        # returns the prior unchanged, so the analytic estimate above is what
+        # actually governs — which is the correct default, not a placeholder.
+        chain = getattr(self, 'calibrator', None)
+        if chain is None:
+            return prior
+        try:
+            return float(chain.p_win(quality, prior, details))
+        except TypeError:
+            return float(chain.p_win(quality, prior))
+        except Exception:
+            return prior
 
     # ─────────────────────────────────────────────────────────────────────────
     @staticmethod
