@@ -476,7 +476,90 @@ def find_replaceable_position(open_trades, new_details, latest_prices, sector_fi
     return None
 
 
-def build_candidate_enricher(logger_, earnings_bars_for):
+# ═════════════════════════════════════════════════════════════════════════════
+# SAFETY LAYER
+# ═════════════════════════════════════════════════════════════════════════════
+# v10 ran two hard safety checkpoints that the v11 rewrite dropped: a
+# price-fetch health check and a drawdown circuit breaker. portfolio_allocator
+# now applies a CONTINUOUS drawdown throttle, which is a better controller —
+# but a throttle is not a breaker. It de-risks smoothly and never stops, so a
+# sustained decline scales positions down without ever asking whether the
+# system should still be trading at all. Both belong: the throttle handles
+# ordinary drawdown, the breaker handles the case where something is wrong.
+#
+# Three checks, each answering a different question:
+#   HEALTH   is the data good enough to trade on today?
+#   BREAKER  has the account fallen far enough that trading should stop until
+#            a human looks at it?
+#   KILL     has the operator asked it to stop?
+#
+# All three fail CLOSED — they suspend new entries. None of them blocks exits
+# or trailing stops. A bot that stops managing the positions it already holds
+# because it distrusts its data is more dangerous than one that keeps managing
+# them, and a breaker that traps you in open risk is not a safety feature.
+
+KILL_SWITCH_FILE = 'STOP_TRADING'   # create this file to suspend entries
+MAX_STALE_SESSIONS = 3              # index data older than this is not tradeable
+
+
+def run_safety_checks(paper_mgr, universe_dfs, index_df, fetch_attempted, notifier=None):
+    """Returns (entries_allowed: bool, reasons: list[str]). Never raises."""
+    reasons = []
+
+    # ── Kill switch ──────────────────────────────────────────────────────────
+    if os.path.exists(KILL_SWITCH_FILE):
+        reasons.append(f"kill switch present ({KILL_SWITCH_FILE}) — delete it to resume")
+
+    # ── Data health ──────────────────────────────────────────────────────────
+    # A partial fetch is the dangerous case, not a total one. Total failure is
+    # obvious and aborts; a 40% fetch silently narrows the universe, skews
+    # breadth toward whichever names happened to resolve, and produces a
+    # confident regime reading from a biased sample.
+    resolved = len(universe_dfs) / max(fetch_attempted, 1)
+    if resolved < 0.70:
+        reasons.append(f"only {resolved*100:.0f}% of symbols resolved "
+                       f"({len(universe_dfs)}/{fetch_attempted}) — breadth would be measured "
+                       f"on a biased sample")
+
+    if index_df is not None and len(index_df) and 'datetime' in index_df:
+        try:
+            last_bar = pd.to_datetime(index_df['datetime'].iloc[-1])
+            stale = int(np.busday_count(last_bar.date(), datetime.now().date()))
+            if stale > MAX_STALE_SESSIONS:
+                reasons.append(f"index data is {stale} sessions stale "
+                               f"(last bar {last_bar.date()})")
+        except Exception:
+            pass
+
+    # ── Drawdown breaker ─────────────────────────────────────────────────────
+    try:
+        equity = float(paper_mgr.current_equity())
+        peak = get_peak_equity(EQUITY_CSV, floor=max(equity, INITIAL_EQUITY))
+        drawdown = (peak - equity) / max(peak, 1.0)
+        if drawdown >= MAX_DRAWDOWN_DEFAULT:
+            reasons.append(f"drawdown {drawdown*100:.1f}% at or beyond the "
+                           f"{MAX_DRAWDOWN_DEFAULT*100:.0f}% breaker "
+                           f"(peak ₹{peak:,.0f} → ₹{equity:,.0f})")
+    except Exception as e:
+        logger.warning(f"  drawdown check unavailable ({e})")
+
+    if reasons and notifier is not None:
+        try:
+            notifier.send_alert(
+                subject="NSE Bot — NEW ENTRIES SUSPENDED",
+                body=("New entries are suspended for this run.\n\n"
+                      + "\n".join(f"  • {r}" for r in reasons)
+                      + "\n\nOpen positions continue to be managed normally: exits, "
+                        "trailing stops and the pre-earnings exit all still run."),
+            )
+        except Exception:
+            pass
+
+    return (not reasons), reasons
+
+
+def build_candidate_enricher(logger_, earnings_bars_for, alpha_blender=None,
+                             calibrator=None):
     """
     Returns a callable the orchestrator applies to its candidate list, or None
     when the sentiment engine is unavailable.
@@ -560,6 +643,23 @@ def build_candidate_enricher(logger_, earnings_bars_for):
                 c['sentiment_tier'] = engine.tier(pct)
             survivors.append(c)
 
+        # ── Blend setup-level evidence into the alpha score ──────────────────
+        # Done here rather than at scoring time because quality_score only
+        # exists for symbols that produced a signal, and p_win only means
+        # anything alongside the prior it was fitted to correct.
+        if alpha_blender is not None:
+            for c in survivors:
+                if c.get('alpha_score') is None:
+                    continue
+                d = c['details']
+                p_win, prior = d.get('p_win_est'), d.get('p_win_est')
+                if calibrator is not None and prior is not None:
+                    p_win = calibrator.p_win(d.get('quality_score', 0.5), prior)
+                blended, detail = alpha_blender.blend_setup_evidence(
+                    c['alpha_score'], d.get('quality_score'), p_win, prior)
+                c['alpha_score'] = blended
+                c['alpha_blend'] = detail
+
         scored = sum(1 for c in survivors if c.get('sentiment_percentile') is not None)
         logger_.info(f"    {len(survivors)}/{len(candidates)} cleared the veto, "
                      f"{scored} carry a percentile")
@@ -631,13 +731,21 @@ def run_eod():
     # ── Step 1: index, volatility and the scan universe ──────────────────────
     # Held symbols are unioned into the fetch list rather than skipped. This is
     # the single wiring change the new exit logic depends on.
+    # get_open_trades() returns list-of-dicts, not a DataFrame — the asymmetry
+    # with get_closed_trades() is deliberate in that class. Handled explicitly
+    # here rather than assumed, because when this was wrapped in a bare
+    # try/except the failure was invisible: held_symbols came back empty, no
+    # open position had its bars fetched, and the log cheerfully reported
+    # "0 held" next to nine live trades.
     held_symbols = set()
     try:
-        open_df = paper_mgr.get_open_trades()
-        if open_df is not None and len(open_df):
-            held_symbols = set(open_df['symbol'].astype(str))
-    except Exception:
-        pass
+        open_rows = paper_mgr.get_open_trades()
+        if isinstance(open_rows, pd.DataFrame):
+            held_symbols = set(open_rows['symbol'].astype(str)) if len(open_rows) else set()
+        elif open_rows:
+            held_symbols = {str(r['symbol']) for r in open_rows if r.get('symbol')}
+    except Exception as e:
+        logger.error(f"  Could not read open positions ({e}) — their exits are deferred")
 
     fetch_list = list(dict.fromkeys(list(SCAN_UNIVERSE) + sorted(held_symbols)))
     logger.info(f"\n📡 Fetching {len(fetch_list)} symbols "
@@ -702,6 +810,7 @@ def run_eod():
     # larger sample says otherwise, it informs ordering and does not decide
     # participation.
     alpha_scores = {}
+    alpha_blender = None
     if USE_ALPHA_ENGINE:
         try:
             alpha_scorer = CompositeAlphaScore()
@@ -710,13 +819,27 @@ def run_eod():
                              for s, d in universe_dfs.items()}
             factor_ranks = alpha_scorer.ranker.rank_universe(factor_values, sector_map=SECTOR_MAP)
             for s in universe_dfs:
-                r = alpha_scorer.score_symbol(s, factor_ranks.get(s, {}), regime_result)
-                if r.get('composite_score') is not None:
-                    alpha_scores[s] = r['composite_score']
+                res = alpha_scorer.score_symbol(s, factor_ranks.get(s, {}), regime_result)
+                if res.get('composite_score') is not None:
+                    alpha_scores[s] = res['composite_score']
+            # Entry-quality and calibrated-probability blending happens inside
+            # the enricher, once signal_generator has produced a quality_score
+            # for the handful of symbols that actually qualified — there is no
+            # setup-level evidence to blend for the 90+ that did not.
+            alpha_blender = alpha_scorer
             logger.info(f"  Alpha scored {len(alpha_scores)} symbols "
                         f"(regime: {regime_result.get('regime')})")
         except Exception as e:
             logger.warning(f"  Alpha engine unavailable this run ({e}) — allocator ranks on economics alone")
+
+    # ── Step 2b: safety checks ───────────────────────────────────────────────
+    notifier = NotificationHandler(use_email=EMAIL_CONFIGURED)
+    entries_allowed, safety_reasons = run_safety_checks(
+        paper_mgr, universe_dfs, nifty_df, len(fetch_list), notifier)
+    if not entries_allowed:
+        logger.warning("  🛑 NEW ENTRIES SUSPENDED — exits and trailing stops continue:")
+        for reason in safety_reasons:
+            logger.warning(f"     • {reason}")
 
     # ── Step 3b: earnings calendar ───────────────────────────────────────────
     # Fetched lazily and only where it can change a decision: for the symbols
@@ -757,8 +880,13 @@ def run_eod():
         universe_dfs, nifty_df, vix_df=vix_df, fundamentals=fundamentals,
         alpha_scores=alpha_scores, base_slots=MAX_OPEN_TRADES,
         max_hold_days=MAX_HOLD_DAYS,
-        candidate_enricher=build_candidate_enricher(logger, bars_to_earnings),
+        candidate_enricher=build_candidate_enricher(
+            logger, bars_to_earnings, alpha_blender,
+            getattr(orchestrator, 'calibrator', None)),
         earnings_bars=held_earnings,
+        # The safety layer only ever removes candidates; it cannot add them,
+        # and it never touches the exit path.
+        entries_allowed=entries_allowed,
     )
 
     # ── Step 5: equity log and report ────────────────────────────────────────
@@ -797,7 +925,7 @@ def run_eod():
         all_trades = pd.read_csv(TRADES_CSV)
         open_mask = all_trades['status'] == 'OPEN'
         all_trades.loc[open_mask, 'last_price'] = all_trades.loc[open_mask, 'symbol'].map(latest_prices)
-        NotificationHandler(use_email=EMAIL_CONFIGURED).send_daily_brief(
+        notifier.send_daily_brief(
             report=report, summary=summary, trades_df=all_trades,
             funnel=bot.signal_gen.funnel_summary(),
             calibrator=getattr(orchestrator, 'calibrator', None),
