@@ -65,6 +65,57 @@ EXTRA_COLUMNS = ['quality_score', 'p_win_est', 'time_exit_bars', 'entry_adx',
                  'market_state_at_entry']
 
 
+def _value(obj, name, *args, default=None):
+    """
+    Read an accessor that may be a property or a method.
+
+    PaperTradingManager exposes free_cash and current_equity as @property;
+    backtest_engine.SimulatedBook exposes them as methods, because it has to
+    compute them. Both are legitimate, and the orchestrator drives both, so it
+    cannot assume either. Calling a float is the exact TypeError that ended the
+    second live run, one crash after the records/DataFrame one.
+    """
+    try:
+        attr = getattr(obj, name)
+    except AttributeError:
+        return default
+    try:
+        return attr(*args) if callable(attr) else attr
+    except Exception:
+        return default
+
+
+def _bars_held(row):
+    """Sessions held. Prefers bars_held (trading sessions, maintained per run)
+    over hold_days, which on legacy rows is a CALENDAR count and reads roughly
+    40% high against a threshold expressed in bars."""
+    for key in ('bars_held', 'hold_days'):
+        v = row.get(key)
+        try:
+            if v is not None and not pd.isna(v):
+                return int(float(v))
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def _as_frame(raw):
+    """Coerce records / DataFrame / None into a DataFrame with numeric columns
+    typed. CSV round-trips leave numbers as strings in records form, and the
+    exit engine compares them against floats."""
+    if raw is None:
+        return pd.DataFrame()
+    df = raw.copy() if isinstance(raw, pd.DataFrame) else pd.DataFrame(list(raw))
+    if len(df) == 0:
+        return df
+    for col in ('entry_price', 'stop_loss', 'initial_stop_loss', 'target_price',
+                'position_size', 'hold_days', 'bars_held', 'time_exit_bars',
+                'entry_adx', 'highest_high', 'quality_score', 'p_win_est'):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
+
+
 def _assign(df, mask, key, value):
     """
     Write a value into a column that may still be an all-NaN float64 block.
@@ -144,7 +195,8 @@ class TradingOrchestrator:
         # would make a data outage indistinguishable from a risk-off tape.
         if ms['new_entries_allowed'] and entries_allowed:
             candidates = self._scan(universe_dfs, index_df, fundamentals, held,
-                                    ms, alpha_scores, max_hold_days)
+                                    ms, alpha_scores, max_hold_days,
+                                    equity=self._capital(prices)[1])
         else:
             candidates = []
             logger.info(f"  Entries suspended — {ms['state']}: {ms['note']}")
@@ -173,8 +225,8 @@ class TradingOrchestrator:
 
         # ── 5. Allocate ──────────────────────────────────────────────────────
         incumbents = self._incumbents(open_trades, universe_dfs, prices)
-        cash = float(self.mgr.free_cash()) - self.pending.reserved_capital()
-        equity = float(self.mgr.current_equity())
+        cash, equity = self._capital(prices)
+        cash -= self.pending.reserved_capital()
         plan = self.alloc.plan(
             candidates, incumbents, equity=equity, cash_available=max(cash, 0.0),
             peak_equity=self._peak_equity(equity), max_slots=ms['max_slots'],
@@ -218,7 +270,7 @@ class TradingOrchestrator:
                 continue                     # no price this run: skip, never assume one
             ev = self.exits.evaluate(row, bars=universe_dfs.get(sym),
                                      current_price=prices[sym],
-                                     bars_held=int(float(row.get('hold_days') or 0)),
+                                     bars_held=_bars_held(row),
                                      bars_to_earnings=(earnings_bars or {}).get(sym))
             if ev['action'] == 'EXIT':
                 self.mgr.close_position(row['trade_id'], ev['exit_price'], ev['exit_reason'])
@@ -277,7 +329,8 @@ class TradingOrchestrator:
                 logger.info(f"  ▲ {sym} filled ₹{d['entry_price']:.2f} — {note}")
         return {'opened': opened, 'expired': expired}
 
-    def _scan(self, universe_dfs, index_df, fundamentals, held, ms, alpha_scores, max_hold_days):
+    def _scan(self, universe_dfs, index_df, fundamentals, held, ms, alpha_scores,
+              max_hold_days, equity=50000):
         candidates = []
         skip = held | set(self.pending.book)
         for sym, df in universe_dfs.items():
@@ -295,7 +348,7 @@ class TradingOrchestrator:
                 continue
             try:
                 sig, d = self.sig.generate_signal(
-                    df, sym, fundamentals.get(sym, {}), self.mgr.current_equity(),
+                    df, sym, fundamentals.get(sym, {}), equity,
                     market_regime=ms['legacy_regime'], benchmark_df=index_df,
                     max_hold_days=max_hold_days)
             except Exception as e:                        # one bad symbol never ends a scan
@@ -323,17 +376,53 @@ class TradingOrchestrator:
             if sym not in prices:
                 continue
             ev = self.exits.evaluate(row, bars=universe_dfs.get(sym), current_price=prices[sym],
-                                     bars_held=int(float(row.get('hold_days') or 0)))
+                                     bars_held=_bars_held(row))
             out.append({'symbol': sym, 'trade': row, 'evaluation': ev, 'price': prices[sym]})
         return out
 
     # ═════════════════════════════════════════════════════════════════════════
+    def _capital(self, prices=None):
+        """
+        Returns (free_cash, total_equity).
+
+        PaperTradingManager.current_equity is a backward-compatibility ALIAS
+        FOR free_cash — it is not equity at all. Sizing against it means that
+        with ₹29k of a ₹50k book deployed, every new position is staked against
+        ₹21k, so positions shrink exactly as the book fills, then fail the
+        economic floor, and the account quietly stops being able to open
+        anything. get_capital_snapshot()'s total_portfolio_value is the real
+        number, and it is what Kelly and the concentration cap must see.
+        """
+        cash = float(_value(self.mgr, 'free_cash', default=0.0) or 0.0)
+        snapshot = _value(self.mgr, 'get_capital_snapshot', prices or {}, default=None)
+        if isinstance(snapshot, dict) and snapshot.get('total_portfolio_value') is not None:
+            return cash, float(snapshot['total_portfolio_value'])
+        equity = _value(self.mgr, 'current_equity', default=None)
+        return cash, float(equity if equity is not None else cash)
+
     def _open_trades(self):
+        """
+        Always returns a DataFrame, whatever shape the manager hands back.
+
+        PaperTradingManager.get_open_trades() returns list-of-dicts (records)
+        while get_closed_trades() returns a DataFrame — a deliberate asymmetry
+        documented in that class, because the alpha calibrator groups over the
+        closed set and the live code iterates the open one. This orchestrator
+        assumed DataFrame for both, so the first real run crashed on
+        `list.iterrows()` the moment a position was open, and the same
+        mismatch silently emptied held_symbols upstream (its extraction was
+        inside a try/except), meaning open positions were never even fetched.
+
+        Normalising here rather than at the three call sites means the next
+        manager that returns records, or a generator, or None, cannot
+        reintroduce it.
+        """
         try:
-            df = self.mgr.get_open_trades()
-            return df if df is not None else pd.DataFrame()
-        except Exception:
+            raw = self.mgr.get_open_trades()
+        except Exception as e:
+            logger.error(f"  Could not read open trades: {e}")
             return pd.DataFrame()
+        return _as_frame(raw)
 
     def _patch_rows(self, updates):
         """
