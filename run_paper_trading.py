@@ -123,6 +123,7 @@ from notification_handler import NotificationHandler
 from alpha_engine import CompositeAlphaScore
 from orchestrator import TradingOrchestrator
 from market_state import MarketState
+from profit_engine import ProfitEngine
 from signal_generator import apply_earnings_constraint
 from signal_generator import SignalGenerator, RISK_PROFILE
 from sentiment_engine import SentimentEngine
@@ -728,6 +729,17 @@ def run_eod():
     bot = SwingTradingBot(send_emails=False, initial_equity=INITIAL_EQUITY,
                           max_open_trades=MAX_OPEN_TRADES, max_hold_days=MAX_HOLD_DAYS)
 
+    # The compounding ladder derives what this account size can actually carry
+    # from the one constraint that binds — the flat depository charge as a share
+    # of position notional. Slot count and per-name concentration follow from
+    # it rather than being independent constants that drift out of step as the
+    # account grows.
+    ladder = ProfitEngine.ladder(paper_mgr.current_equity or INITIAL_EQUITY)
+    RISK_PROFILE['max_capital_pct'] = ladder['max_capital_pct']
+    effective_slots = min(MAX_OPEN_TRADES, ladder['recommended_slots'])
+    logger.info(f"  Ladder: {ladder['note']} | concentration cap "
+                f"{ladder['max_capital_pct']*100:.0f}% | slots {effective_slots}")
+
     # ── Step 1: index, volatility and the scan universe ──────────────────────
     # Held symbols are unioned into the fetch list rather than skipped. This is
     # the single wiring change the new exit logic depends on.
@@ -878,7 +890,7 @@ def run_eod():
     )
     report = orchestrator.run(
         universe_dfs, nifty_df, vix_df=vix_df, fundamentals=fundamentals,
-        alpha_scores=alpha_scores, base_slots=MAX_OPEN_TRADES,
+        alpha_scores=alpha_scores, base_slots=effective_slots,
         max_hold_days=MAX_HOLD_DAYS,
         candidate_enricher=build_candidate_enricher(
             logger, bars_to_earnings, alpha_blender,
