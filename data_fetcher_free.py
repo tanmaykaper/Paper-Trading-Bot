@@ -1,6 +1,7 @@
 # data_fetcher_free.py
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
@@ -153,6 +154,65 @@ def _sanitize_ohlcv(df, symbol):
         notes.append(f"{remaining} unexplained move(s) over {_JUMP_THRESHOLD*100:.0f}% remain "
                      f"— genuine limit moves, or an action with an unrecognised ratio")
     return d, notes
+
+
+def data_quality(df, as_of=None, max_stale_sessions=3, flat_window=5):
+    """
+    Is this frame safe to trade on today?
+
+    Three failure modes that all present as a perfectly well-formed DataFrame,
+    which is why none of them was caught anywhere:
+
+      STALE      — the fetch succeeded but returned an old frame (cached
+                   response, delisting, a feed that stopped updating). Every
+                   indicator computes cleanly on it and every signal is a
+                   signal about last week.
+      HALTED     — zero volume for several sessions. The scrip is suspended or
+                   untradeable; an order will not fill, and the ATR computed
+                   across the halt is meaningless.
+      FROZEN     — an identical close repeated for several sessions, which on
+                   NSE usually means a circuit-locked scrip with no trades
+                   going through. Volatility reads as near zero, which makes
+                   signal_generator's stop distance collapse toward the MIN
+                   floor and position size explode.
+
+    Returns {'tradeable', 'reason', 'stale_sessions', 'zero_volume_days',
+    'flat_close_days'}. Never raises.
+    """
+    out = {'tradeable': False, 'reason': 'no data', 'stale_sessions': None,
+           'zero_volume_days': 0, 'flat_close_days': 0}
+    if df is None or len(df) < 5:
+        return out
+
+    try:
+        if 'datetime' in df.columns:
+            last = pd.to_datetime(df['datetime'].iloc[-1])
+            ref = pd.Timestamp(as_of) if as_of is not None else pd.Timestamp(datetime.now())
+            stale = int(np.busday_count(last.date(), ref.date()))
+            out['stale_sessions'] = stale
+            if stale > max_stale_sessions:
+                out['reason'] = (f'last bar {last.date()} is {stale} sessions old — '
+                                 f'stale feed, delisting or suspension')
+                return out
+
+        vol = df['volume'].astype(float).tail(flat_window)
+        out['zero_volume_days'] = int((vol <= 0).sum())
+        if out['zero_volume_days'] >= 3:
+            out['reason'] = f'{out["zero_volume_days"]} of the last {flat_window} sessions had no volume'
+            return out
+
+        closes = df['close'].astype(float).tail(flat_window)
+        out['flat_close_days'] = int((closes.diff().abs() < 1e-9).sum())
+        if out['flat_close_days'] >= flat_window - 1:
+            out['reason'] = (f'close unchanged across {flat_window} sessions — likely '
+                             f'circuit-locked; volatility estimates are not usable')
+            return out
+    except Exception as e:
+        out['reason'] = f'quality check failed: {e}'
+        return out
+
+    out.update({'tradeable': True, 'reason': None})
+    return out
 
 
 def _coerce_date(value):
