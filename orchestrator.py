@@ -48,6 +48,7 @@ from portfolio_allocator import PortfolioAllocator, print_plan
 from exit_manager import ExitEngine
 from entry_execution import PendingOrders, route, enrich_signal_bar
 from calibration import WinCalibrator, refresh_from_csv
+from data_fetcher_free import data_quality
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class TradingOrchestrator:
         self.exits = ExitEngine(profile)
         self.alloc = PortfolioAllocator(profile, self.sector_map)
         self.calibrator = WinCalibrator()
+        self.funnel_extra = {}
         # Hand the calibrated map to the signal generator, so the EV gate and
         # Kelly both read measured probability rather than the asserted tilt.
         self.sig.calibrator = self.calibrator
@@ -106,7 +108,7 @@ class TradingOrchestrator:
     # ─────────────────────────────────────────────────────────────────────────
     def run(self, universe_dfs, index_df, vix_df=None, fundamentals=None,
             alpha_scores=None, base_slots=5, max_hold_days=18,
-            candidate_enricher=None, earnings_bars=None):
+            candidate_enricher=None, earnings_bars=None, entries_allowed=True):
         """
         One complete daily cycle. universe_dfs is the {symbol: OHLCV} dict the
         scanner already builds — it must now include HELD symbols, which the
@@ -130,12 +132,17 @@ class TradingOrchestrator:
         report['exits'] = self._process_exits(universe_dfs, prices, earnings_bars or {})
 
         # ── 3. Yesterday's approved plans, before today's candidates ─────────
-        report['fills'] = self._process_pending(universe_dfs, ms)
+        report['fills'] = self._process_pending(universe_dfs, ms, entries_allowed)
 
         # ── 4. Scan ──────────────────────────────────────────────────────────
         open_trades = self._open_trades()
         held = set(open_trades['symbol']) if len(open_trades) else set()
-        if ms['new_entries_allowed']:
+        # Two independent authorities can suspend entries and both must agree
+        # to allow them: the market state (is this a day worth trading?) and the
+        # caller's safety layer (is the system in a fit state to trade?). Kept
+        # separate because they fail for unrelated reasons and a single flag
+        # would make a data outage indistinguishable from a risk-off tape.
+        if ms['new_entries_allowed'] and entries_allowed:
             candidates = self._scan(universe_dfs, index_df, fundamentals, held,
                                     ms, alpha_scores, max_hold_days)
         else:
@@ -171,10 +178,8 @@ class TradingOrchestrator:
         plan = self.alloc.plan(
             candidates, incumbents, equity=equity, cash_available=max(cash, 0.0),
             peak_equity=self._peak_equity(equity), max_slots=ms['max_slots'],
-            returns_frame=self._returns_frame(universe_dfs),
+            returns_frame=self._returns_frame(universe_dfs), exposure=ms['exposure'],
         )
-        # Exposure scales the heat budget; the allocator's own cap is a ceiling,
-        # the market state decides how much of it is in use today.
         plan['diagnostics']['exposure'] = ms['exposure']
         print_plan(plan)
 
@@ -230,7 +235,7 @@ class TradingOrchestrator:
         self._patch_rows(updates)
         return out
 
-    def _process_pending(self, universe_dfs, ms):
+    def _process_pending(self, universe_dfs, ms, entries_allowed=True):
         bars = {s: df.iloc[-1] for s, df in universe_dfs.items() if df is not None and len(df)}
         filled, expired = self.pending.process(bars)
         for sym, reason in expired:
@@ -240,7 +245,7 @@ class TradingOrchestrator:
             # A plan approved under one market state can fill into another. The
             # exposure decision is made fresh at the moment capital is actually
             # committed, not at the moment the plan was drafted.
-            if not ms['new_entries_allowed']:
+            if not (ms['new_entries_allowed'] and entries_allowed):
                 logger.info(f"  ✗ {sym}: filled but entries now suspended ({ms['state']})")
                 continue
             # Re-anchoring shrinks the share count to hold rupee risk constant
@@ -278,6 +283,16 @@ class TradingOrchestrator:
         for sym, df in universe_dfs.items():
             if sym in skip or df is None:
                 continue
+            # A stale, halted or circuit-frozen frame computes cleanly and
+            # produces a confident signal about a stock that is not trading.
+            # Checked here rather than in the fetcher because a held position
+            # still needs its bars for the exit engine even when the symbol is
+            # no longer enterable.
+            quality = data_quality(df)
+            if not quality['tradeable']:
+                self.funnel_extra[quality['reason'][:60]] = \
+                    self.funnel_extra.get(quality['reason'][:60], 0) + 1
+                continue
             try:
                 sig, d = self.sig.generate_signal(
                     df, sym, fundamentals.get(sym, {}), self.mgr.current_equity(),
@@ -295,6 +310,9 @@ class TradingOrchestrator:
             d = enrich_signal_bar(d, df)
             candidates.append({'symbol': sym, 'details': d,
                                'alpha_score': (alpha_scores or {}).get(sym)})
+        if self.funnel_extra:
+            logger.info(f"  Skipped on data quality: {self.funnel_extra}")
+            self.funnel_extra = {}
         logger.info(f"  Scan: {len(candidates)} candidates | funnel {self.sig.funnel_summary(reset=True)}")
         return candidates
 
