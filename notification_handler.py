@@ -544,6 +544,23 @@ def build_daily_brief(report=None, summary=None, trades_df=None, funnel=None,
         top = list(funnel.items())[:3]
         add("\nFUNNEL      " + " | ".join(f"{v}x {k[:34]}" for k, v in top))
 
+    # ── Learned layers ───────────────────────────────────────────────────────
+    # Both report their own activation state, because "the model is off" and
+    # "the model is on and says this" are decisions the operator should be able
+    # to tell apart at a glance.
+    engines = (report or {}).get('engines') or {}
+    if engines.get('risk_scalar'):
+        rs = engines['risk_scalar']
+        add(f"\nRISK SCALE  {rs.get('scalar', 1.0):.2f}x  ({rs.get('reason', '')})")
+    if engines.get('meta'):
+        add(f"\nMETA MODEL  {engines['meta']}")
+    if engines.get('pyramids'):
+        add("\nPYRAMIDS")
+        for sym, size, why in engines['pyramids']:
+            add(f"   ⬆ {sym:<12} +{size}  {why}")
+    if engines.get('ladder'):
+        add(f"\nLADDER      {engines['ladder']}")
+
     # ── Calibration ──────────────────────────────────────────────────────────
     if calibrator is not None:
         try:
