@@ -299,7 +299,7 @@ class PortfolioAllocator:
                     f"(kelly λ={self.P['kelly_lambda']}, heat cap {self.P['max_portfolio_heat']*100:.0f}%)")
 
     # ─────────────────────────────────────────────────────────────────────────
-    def heat_budget(self, equity, peak_equity):
+    def heat_budget(self, equity, peak_equity, exposure=None):
         """
         Total open risk the book is allowed to carry, throttled continuously by
         drawdown rather than switched off at a cliff.
@@ -314,8 +314,24 @@ class PortfolioAllocator:
         """
         peak = max(float(peak_equity or equity), 1e-9)
         dd = max(0.0, (peak - float(equity)) / peak)
-        throttle = 1.0 - (dd / max(self.P['drawdown_soft_max'], 1e-9))
-        throttle = float(np.clip(throttle, self.P['heat_floor'], 1.0))
+
+        # ── One drawdown authority, not three ────────────────────────────────
+        # market_state already de-risks on drawdown, this method de-risks on
+        # drawdown, and run_paper_trading has a circuit breaker that halts on
+        # drawdown. Three controllers reading the same input and acting
+        # independently do not add safety — they multiply. Two throttles at
+        # 0.6 each leave 36% of the intended exposure, which is not a decision
+        # anyone made, and it is unattributable after the fact.
+        #
+        # So when the caller supplies a market-state exposure, that IS the
+        # drawdown response and this method stops applying its own. When no
+        # exposure is supplied — a standalone allocator, a unit test — the
+        # internal throttle remains, so the class is still safe on its own.
+        if exposure is not None:
+            throttle = float(np.clip(float(exposure), 0.0, 1.5))
+        else:
+            throttle = float(np.clip(1.0 - (dd / max(self.P['drawdown_soft_max'], 1e-9)),
+                                     self.P['heat_floor'], 1.0))
         return float(equity) * self.P['max_portfolio_heat'] * throttle, dd, throttle
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -394,7 +410,7 @@ class PortfolioAllocator:
 
     # ─────────────────────────────────────────────────────────────────────────
     def plan(self, candidates, incumbents, equity, cash_available,
-             peak_equity=None, max_slots=5, returns_frame=None):
+             peak_equity=None, max_slots=5, returns_frame=None, exposure=None):
         """
         The daily allocation decision.
 
@@ -409,7 +425,7 @@ class PortfolioAllocator:
         so the decision is inspectable and loggable before any order exists.
         """
         P = self.P
-        heat_cap, dd, throttle = self.heat_budget(equity, peak_equity)
+        heat_cap, dd, throttle = self.heat_budget(equity, peak_equity, exposure)
         open_heat = sum(float(i['trade'].get('position_size', 0) or 0) *
                         max(float(i['price']) - float(i['trade']['stop_loss']), 0.0)
                         for i in incumbents)
