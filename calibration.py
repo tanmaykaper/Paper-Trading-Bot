@@ -71,6 +71,14 @@ CALIBRATION_JSON = 'win_calibration.json'
 MIN_TRADES_TO_FIT = 25       # below this the map is pure prior; above, evidence enters gradually
 SHRINK_K = 30.0              # trades for 50% weight on observed vs prior, per bin
 N_BINS = 5
+SIGNAL_Z_THRESHOLD = 1.28   # one-sided; see the significance guard in fit()
+
+
+def _se2(p, n):
+    """Squared standard error of a binomial rate."""
+    n = max(int(n), 1)
+    p = float(min(max(p, 0.0), 1.0))
+    return p * (1.0 - p) / n
 
 
 def _isotonic(x, y, w):
@@ -123,6 +131,8 @@ class WinCalibrator:
         self.brier_model = None
         self.brier_prior = None
         self.retention = 0.60     # allocator's edge_retention default
+        self.signal_detected = False
+        self.signal_z = None
         self.load()
 
     # ── persistence ──────────────────────────────────────────────────────────
@@ -136,6 +146,8 @@ class WinCalibrator:
             self.brier_model = d.get('brier_model')
             self.brier_prior = d.get('brier_prior')
             self.retention = float(d.get('retention', 0.60))
+            self.signal_detected = bool(d.get('signal_detected', False))
+            self.signal_z = d.get('signal_z')
         except (ValueError, OSError) as e:
             logger.warning(f"calibration load failed ({e}) — running on the analytic prior")
         return self
@@ -143,7 +155,8 @@ class WinCalibrator:
     def save(self):
         json.dump({'bins': self.bins, 'n_trades': self.n_trades,
                    'brier_model': self.brier_model, 'brier_prior': self.brier_prior,
-                   'retention': self.retention}, open(self.path, 'w'), indent=1)
+                   'retention': self.retention, 'signal_detected': self.signal_detected,
+                   'signal_z': self.signal_z}, open(self.path, 'w'), indent=1)
         return self
 
     # ── the map ──────────────────────────────────────────────────────────────
@@ -160,6 +173,8 @@ class WinCalibrator:
         prior = float(np.clip(prior, 0.02, 0.95))
         if self.n_trades < MIN_TRADES_TO_FIT or not self.bins:
             return prior
+        if not getattr(self, 'signal_detected', True):
+            return prior          # quality has not been shown to predict anything yet
         b = self._bin_for(quality)
         if b is None:
             return prior
@@ -222,6 +237,35 @@ class WinCalibrator:
         self.bins[0]['lo'], self.bins[-1]['hi'] = 0.0, 1.0
         self.n_trades = int(len(df))
 
+        # ── Significance guard ───────────────────────────────────────────────
+        # Isotonic regression only pools ADJACENT VIOLATING pairs, so a noise
+        # pattern that happens to come out monotone passes through untouched.
+        # At n=400 on data with no real relationship, the regression suite
+        # measured a 5.5pp spread across quality bands purely from sampling —
+        # enough to move a Kelly stake materially in the wrong direction.
+        #
+        # So before the map is allowed to depart from the prior at all, the
+        # top-to-bottom difference must clear roughly two standard errors of
+        # that difference. Below it, there is no measured relationship between
+        # quality and outcome, and the honest output is the prior — not a
+        # confident-looking curve fitted to noise.
+        lo, hi = self.bins[0], self.bins[-1]
+        se = np.sqrt(_se2(lo['p_obs'], lo['n']) + _se2(hi['p_obs'], hi['n']))
+        observed = hi['p_fitted'] - lo['p_fitted']
+        # One-sided, at z=1.28. The hypothesis is directional — higher quality
+        # should mean a higher win rate, not merely a different one — so a
+        # two-sided test is the wrong shape. The level is set deliberately
+        # loose: at the sample sizes this will realistically see (100-400
+        # trades), a genuine effect of the size worth acting on produces z of
+        # roughly 1.5, so a 2-sigma gate would keep the calibrator switched off
+        # essentially forever and leave the stack running on a hand-set
+        # constant instead. 1.28 accepts a ~10% chance of acting on a direction
+        # that is not real, against the certainty of never learning at all.
+        # The downstream clip to [0.5x, 1.6x] of the prior bounds the damage if
+        # that 10% lands.
+        self.signal_detected = bool(observed > SIGNAL_Z_THRESHOLD * se) if se > 0 else False
+        self.signal_z = round(float(observed / se), 2) if se > 0 else None
+
         # Does the map beat the constant it replaces? Brier = mean squared
         # error of the probability. Lower is better; if the model does not
         # win here, p_win() is still safe (it shrinks to prior) but the
@@ -268,6 +312,9 @@ class WinCalibrator:
             w = b['n'] / (b['n'] + SHRINK_K)
             lines.append(f"  {b['lo']:.2f}–{b['hi']:.2f}{'':<8}{b['n']:>5}"
                          f"{b['p_obs']*100:>10.1f}%{b['p_fitted']*100:>10.1f}%{w:>9.2f}")
+        if not self.signal_detected:
+            lines.append(f"  Quality-to-outcome relationship not yet significant "
+                         f"(z={self.signal_z}) — holding the analytic prior.")
         if self.brier_model is not None:
             verdict = 'beats' if self.brier_model < self.brier_prior else 'does not beat'
             lines.append(f"  Brier: model {self.brier_model:.4f} vs prior {self.brier_prior:.4f} "
