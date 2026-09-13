@@ -123,9 +123,29 @@ EXIT_PROFILES = {
         'min_hold_before_decay':    3,
         'earnings_exit_buffer':     1,
     },
+    'growth': {
+        # Wider rope before the first tightening, and a much longer hard cap.
+        # A 4:1 target inside a 30-session horizon needs time to get there, and
+        # a trail that tightens at +1R would cut the trade off in the middle of
+        # the move it was sized for. The protective floors are unchanged —
+        # rope is bought with patience, never by loosening what is locked in.
+        'chandelier_tiers': [
+            (4.0, 1.7, 2.50),
+            (2.5, 2.2, 1.30),
+            (1.2, 2.8, 0.05),
+            (0.5, 3.3, None),
+        ],
+        'decay_exit_min_signals_in_profit': 3,
+        'decay_exit_min_signals_in_loss':   3,
+        'stagnation_progress_r':   0.50,
+        'stagnation_checkpoint':   0.45,
+        'max_hold_hard_cap':       22,   # outer bound on a 14-session planned horizon
+        'min_hold_before_decay':    3,
+        'earnings_exit_buffer':     1,
+    },
 }
 
-ACTIVE_PROFILE = 'aggressive'
+ACTIVE_PROFILE = 'growth'
 
 
 def get_profile(name=None):
