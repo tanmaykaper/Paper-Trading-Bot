@@ -112,11 +112,12 @@ PROFIT_PROFILES = {
         'pyramid_trigger_r':    1.00,
         'pyramid_size_pct':     0.60,
         'pyramid_max_adds':     2,
+        'pyramid_stop_r':       1.50,   # combined stop rides this far under price on each add
         'min_trades_for_curve': 12,
     },
 }
 
-ACTIVE_PROFILE = 'aggressive'
+ACTIVE_PROFILE = 'aggressive'  # 'growth' inherits these; see PROFIT_PROFILES
 
 
 def get_profile(name=None):
@@ -252,7 +253,25 @@ def evaluate_pyramid(trade, current_price, equity, free_cash, heat_room,
     # on price — the same correction exit_manager applies to its trailing floor.
     combined = size + add_size
     cost_ps = round_trip_commission(entry, price, combined) / combined
-    new_stop = round(entry + cost_ps, 2)
+
+    # The stop is trailed to the higher of breakeven-plus-costs and the
+    # position's existing trailed stop BEFORE the net-risk test runs. Testing
+    # against a stale stop is what blocked every second add in testing: by the
+    # time a trade reaches +2.5R its stop has usually ratcheted well above
+    # entry, and ignoring that made the add look like it raised risk when it
+    # reduced it. Right-skewed distributions pay in the tail, and the tail is
+    # exactly where the second add lives.
+    # Each add RATCHETS the combined stop up to ride a fixed distance under the
+    # current price, rather than sitting at entry. Anchoring it at entry is what
+    # blocked every second add in testing: a unit bought at +3R and stopped at
+    # entry carries three units of risk on its own, so the net-risk test refused
+    # it — correctly, given that stop. The answer is not to relax the test, it
+    # is to place the stop where a pyramided position's stop actually belongs.
+    # The first unit's locked profit funds the second; the ratchet is what makes
+    # that literally true rather than a figure of speech.
+    trailed = float(trade.get('stop_loss') or 0.0)
+    ratchet = price - P['pyramid_stop_r'] * risk_ps
+    new_stop = round(max(entry + cost_ps, trailed, ratchet), 2)
     if new_stop >= price:
         out['reason'] = 'price has not cleared breakeven-plus-costs yet'
         return out
@@ -280,7 +299,7 @@ def evaluate_pyramid(trade, current_price, equity, free_cash, heat_room,
 # ═════════════════════════════════════════════════════════════════════════════
 # 3. THE COMPOUNDING LADDER
 # ═════════════════════════════════════════════════════════════════════════════
-def compounding_ladder(equity, flat_charge=None, target_flat_bps=22.0):
+def compounding_ladder(equity, flat_charge=None, target_flat_bps=22.0, mode='diversified'):
     """
     What this account size can actually support, derived rather than assumed.
 
@@ -291,6 +310,15 @@ def compounding_ladder(equity, flat_charge=None, target_flat_bps=22.0):
 
     Returns a dict the caller can apply to RISK_PROFILE and the allocator.
     """
+    # Read the economic floor from the live risk profile when it is available,
+    # so the ladder and signal_generator cannot disagree about what the minimum
+    # viable position is — the duplicate-constant failure this project has hit
+    # five times.
+    try:
+        from signal_generator import RISK_PROFILE
+        target_flat_bps = float(RISK_PROFILE.get('max_flat_cost_bps', target_flat_bps))
+    except Exception:
+        pass
     flat = float(flat_charge if flat_charge is not None else FLAT_CHARGE_PER_SELL)
     equity = max(float(equity), 1.0)
     min_notional = flat / (target_flat_bps / 1e4)
@@ -298,9 +326,46 @@ def compounding_ladder(equity, flat_charge=None, target_flat_bps=22.0):
     slots = max(int(equity / min_notional), 1)
     slots = min(slots, 15)                      # beyond this, attention is the constraint
     concentration = float(np.clip(1.0 / max(slots - 1, 1), 0.10, 0.45))
+
+    if mode == 'growth':
+        # ── Why fewer, larger positions ──────────────────────────────────────
+        # Effective risk per trade is concentration x stop width. At 25%
+        # concentration and a 4.5% stop that is 1.1% of equity — roughly
+        # quarter-Kelly, and a rate that cannot compound an account no matter
+        # how good the signals are. The Monte Carlo sweep puts peak median
+        # growth near 4.5% risk per trade, which needs concentration in the
+        # 40-60% band.
+        #
+        # The cost of that is real and is not hidden: median drawdown roughly
+        # doubles (6% -> 15%) and the probability of finishing a 300-session
+        # year down rises from 14% to 24%. That is the trade being made, and it
+        # is only worth making if the edge is genuinely positive — at zero edge
+        # this configuration loses money considerably faster than the timid one.
+        #
+        # Slot count is deliberately capped low. Concentration and slot count
+        # are the same quantity seen from two sides, and letting both drift up
+        # as equity grows would quietly return the book to the diversified
+        # configuration this mode exists to leave.
+        # Concentration is held CONSTANT rather than derived from slot count.
+        # Deriving it (1.6/slots) made risk per trade fall as the account grew —
+        # ₹50k gave 3.6% and ₹100k gave 1.9%, which is backwards: the account
+        # would de-risk precisely as it earned the capacity to compound. Risk
+        # per trade is set once, at the growth-optimal level, and held there;
+        # max_capital_pct is a cap for outliers, and signal_generator's
+        # risk-based sizing does the actual work.
+        # 3 slots at 33% deploys exactly 100% of a cash account. Concentration
+        # is held constant as equity grows so risk per trade does not decay the
+        # moment the account earns the capacity to compound.
+        # Deployment is capped at 100% — a cash delivery account has no
+        # leverage, and an earlier draft quietly assumed 104-180% because
+        # concentration and slot count were set independently. They are the
+        # same quantity seen from two sides and are now derived together.
+        slots = int(np.clip(equity / (min_notional * 1.8), 2, 4))
+        concentration = float(np.clip(1.0 / slots, 0.25, 0.50))
     tranche_viable = equity >= 3.0 * min_notional * 2     # 3 rows in each of 2 positions
 
     return {
+        'mode': mode,
         'equity': round(equity, 2),
         'min_notional': round(min_notional, 2),
         'recommended_slots': slots,
@@ -339,8 +404,8 @@ class ProfitEngine:
                                 evaluation, market_state, self.profile)
 
     @staticmethod
-    def ladder(equity):
-        return compounding_ladder(equity)
+    def ladder(equity, mode='growth'):
+        return compounding_ladder(equity, mode=mode)
 
     def report(self, equity_history, closed_trades, equity):
         scalar, detail = self.risk_scalar(equity_history, closed_trades)
