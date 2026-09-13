@@ -116,9 +116,29 @@ ALLOCATOR_PROFILES = {
         'min_edge_roc_per_day':  0.0004,
         'settlement_days':       1,
     },
+    'growth': {
+        # Matched to signal_generator's 'growth' calibration. Kelly lambda is
+        # raised toward the level the Monte Carlo put peak median growth at,
+        # and max_risk_pct is lifted so the Kelly fraction is what binds rather
+        # than a ceiling set for a different book. Heat rises because two or
+        # three positions at 3.5% risk each plus pyramid adds needs room —
+        # without it the heat cap silently re-imposes the timid configuration
+        # this profile exists to replace.
+        'kelly_lambda':          0.45,
+        'max_risk_pct':          0.045,
+        'max_capital_pct':       0.35,
+        'max_portfolio_heat':    0.14,   # 3 positions at ~2% + pyramid adds
+        'heat_floor':            0.40,
+        'drawdown_soft_max':     0.30,
+        'switch_margin':         1.4,
+        'max_correlation':       0.85,
+        'max_per_sector':        2,
+        'min_edge_roc_per_day':  0.0004,
+        'settlement_days':       1,
+    },
 }
 
-ACTIVE_PROFILE = 'aggressive'
+ACTIVE_PROFILE = 'growth'
 
 # The alpha composite enters the ranking as a small tilt rather than a gate.
 # It may well carry signal that 41 trades cannot resolve, so discarding it
@@ -138,6 +158,13 @@ ALPHA_TILT = 0.15
 # and sentiment_engine's ranker already excludes zero-confidence symbols from
 # its percentiles for exactly this reason.
 SENTIMENT_TILT = 0.12
+
+# Cross-sectional momentum already gates the scan, so by allocation time every
+# candidate is in the top tier. The tilt only orders WITHIN that tier, which is
+# why it is the largest of the three: it is the one input with published
+# out-of-sample support behind it, and it is discriminating among names that
+# have already cleared the same bar.
+MOMENTUM_TILT = 0.20
 
 
 def get_profile(name=None):
@@ -401,6 +428,9 @@ class PortfolioAllocator:
             if alpha is not None:
                 # alpha scores run 0-100; centre at 55, the project's own neutral placeholder
                 tilt *= 1.0 + ALPHA_TILT * float(np.clip((float(alpha) - 55.0) / 45.0, -1.0, 1.0))
+            mom = c.get('momentum_percentile')
+            if mom is not None:
+                tilt *= 1.0 + MOMENTUM_TILT * float(np.clip((float(mom) - 70.0) / 30.0, -1.0, 1.0))
             sent = c.get('sentiment_percentile')
             if sent is not None:
                 tilt *= 1.0 + SENTIMENT_TILT * float(np.clip((float(sent) - 50.0) / 50.0, -1.0, 1.0))
