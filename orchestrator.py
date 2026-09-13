@@ -50,12 +50,16 @@ from entry_execution import PendingOrders, route, enrich_signal_bar
 from calibration import WinCalibrator, refresh_from_csv
 from meta_model import MetaModel, refresh_meta_model
 from profit_engine import ProfitEngine
+from momentum_rank import rank_universe, gate as momentum_gate
 from data_fetcher_free import data_quality
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 STATE_JSON = 'orchestrator_state.json'
+
+# Only the strongest tier of the universe is tradeable. 70 = top 30%.
+MOMENTUM_GATE_PERCENTILE = 70.0
 
 # Columns the new stack needs on each trade row. PaperTradingManager.open_trade
 # does not accept them, so they are written straight after the row is created
@@ -160,7 +164,7 @@ def _assign(df, mask, key, value):
 
 class TradingOrchestrator:
 
-    def __init__(self, manager, signal_gen, sector_map=None, profile='aggressive',
+    def __init__(self, manager, signal_gen, sector_map=None, profile='growth',
                  trades_csv='paper_trades.csv', state_path=STATE_JSON):
         self.mgr = manager
         self.sig = signal_gen
@@ -178,6 +182,8 @@ class TradingOrchestrator:
         self.meta = MetaModel()
         self.profit = ProfitEngine(profile)
         self.funnel_extra = {}
+        self.ranks = {}
+        self.momentum_threshold = MOMENTUM_GATE_PERCENTILE
         # Hand the probability chain to the signal generator, so the EV gate
         # and Kelly both read measured probability rather than an asserted
         # tilt. The chain is deliberately layered: the geometry-derived prior
@@ -205,6 +211,12 @@ class TradingOrchestrator:
 
         # ── 1. Market state ──────────────────────────────────────────────────
         panel = BreadthPanel(universe_dfs)
+        # Cross-sectional ranking is computed once per run and used as a GATE on
+        # the scan, not a tiebreak at allocation. A strong chart in absolute
+        # terms is exactly the criterion that produced a 36% win rate; what has
+        # to be true is that the name is strong RELATIVE TO EVERYTHING ELSE
+        # available today.
+        self.ranks = rank_universe(universe_dfs, index_df)
         ms = self.market.assess(index_df, vix_df=vix_df, breadth_panel=panel,
                                 base_slots=base_slots)
         print_state(ms)
@@ -439,6 +451,11 @@ class TradingOrchestrator:
             # Checked here rather than in the fetcher because a held position
             # still needs its bars for the exit engine even when the symbol is
             # no longer enterable.
+            eligible, why = momentum_gate(getattr(self, 'ranks', {}), sym,
+                                          self.momentum_threshold)
+            if not eligible:
+                self.funnel_extra[why[:60]] = self.funnel_extra.get(why[:60], 0) + 1
+                continue
             quality = data_quality(df)
             if not quality['tradeable']:
                 self.funnel_extra[quality['reason'][:60]] = \
@@ -459,8 +476,10 @@ class TradingOrchestrator:
             if ms['quality_add'] > 0 and d['quality_score'] < d['quality_required'] + ms['quality_add']:
                 continue
             d = enrich_signal_bar(d, df)
+            rank = (getattr(self, 'ranks', {}) or {}).get(sym) or {}
             candidates.append({'symbol': sym, 'details': d,
-                               'alpha_score': (alpha_scores or {}).get(sym)})
+                               'alpha_score': (alpha_scores or {}).get(sym),
+                               'momentum_percentile': rank.get('percentile')})
         if self.funnel_extra:
             logger.info(f"  Skipped on data quality: {self.funnel_extra}")
             self.funnel_extra = {}
