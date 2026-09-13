@@ -154,7 +154,16 @@ MAX_OPEN_TRADES = 10
 # 1.89. Realised time-exits in paper_trades.csv averaged 23.8 days, so the old
 # clock was also truncating trades that were still working. exit_manager now
 # enforces a PER-TRADE horizon (time_exit_bars) inside this outer cap.
-MAX_HOLD_DAYS   = 18
+# 14, down from 18 and from the 30 an earlier draft of the growth profile used.
+# Counter-intuitive, and it is the single largest result of the feasibility
+# sweep: a longer horizon buys a higher achievable R:R
+# (RR_max = reach*sqrt(H)/k_stop) and loses more in turnover than it gains in
+# payoff. At 3 slots, H=40 with R:R 3.28 returns a ₹58,782 median against
+# ₹66,618 at H=14 with R:R 1.94 — and the short-horizon version also finishes
+# down less often (6% vs 14%). Compounding is driven by events per unit time.
+# The stop cap stays at 2.60 sigma throughout; the horizon is shortened, never
+# the stop.
+MAX_HOLD_DAYS   = 14
 
 # Alpha is a ranking input, not an admission gate. Its own tier breakdown shows
 # no separation on the sample so far (Tier 2 mean -0.086R vs Tier 3 -0.072R,
@@ -167,6 +176,11 @@ USE_ALPHA_ENGINE = True
 # buried in the report so it is a visible, editable assumption — the brief
 # converts it into the win rate the CURRENT trade geometry would need, which is
 # the one input worth watching converge.
+# 'growth' concentrates into fewer, larger positions so that RISK-based sizing
+# binds instead of the concentration cap. 'diversified' is the previous
+# behaviour, kept switchable rather than deleted.
+LADDER_MODE = 'growth'
+
 TARGET_EQUITY = 75000
 TARGET_MONTHS = 3.5
 EMAIL_CONFIGURED = bool(os.getenv('EMAIL_SENDER') and os.getenv('EMAIL_PASSWORD'))
@@ -534,7 +548,7 @@ def run_safety_checks(paper_mgr, universe_dfs, index_df, fetch_attempted, notifi
 
     # ── Drawdown breaker ─────────────────────────────────────────────────────
     try:
-        equity = float(paper_mgr.current_equity())
+        equity = float(_total_equity(paper_mgr))
         peak = get_peak_equity(EQUITY_CSV, floor=max(equity, INITIAL_EQUITY))
         drawdown = (peak - equity) / max(peak, 1.0)
         if drawdown >= MAX_DRAWDOWN_DEFAULT:
@@ -669,6 +683,35 @@ def build_candidate_enricher(logger_, earnings_bars_for, alpha_blender=None,
     return enrich
 
 
+def _total_equity(paper_mgr, floor=None):
+    """
+    TOTAL portfolio value — cash plus open positions at market plus realised
+    P&L — not free cash.
+
+    This is the compounding path, and it was leaking in two places.
+    PaperTradingManager.current_equity is a backward-compatibility ALIAS for
+    free_cash, so with ₹29,000 deployed it reports ~₹21,000. Sizing and the
+    ladder both read it, which meant the account de-risked precisely as it put
+    capital to work: three slots became two, position sizes shrank, and profits
+    already earned were invisible to the next trade's sizing.
+
+    With this reading the correct number, a ₹1,000 realised gain raises total
+    equity by ₹1,000, which raises the per-trade risk budget (3.5% of equity)
+    and the concentration cap together — so the next position is sized off the
+    larger base. That is the compounding loop, and it now actually closes.
+    """
+    try:
+        snap = paper_mgr.get_capital_snapshot()
+        total = snap.get('total_portfolio_value')
+        if total:
+            return float(total)
+    except Exception:
+        pass
+    cash = getattr(paper_mgr, 'free_cash', None)
+    cash = cash() if callable(cash) else cash
+    return float(cash if cash is not None else (floor or 0.0))
+
+
 def run_eod():
     """
     v11 — DAILY RUN, DELEGATED TO orchestrator.TradingOrchestrator
@@ -734,7 +777,7 @@ def run_eod():
     # of position notional. Slot count and per-name concentration follow from
     # it rather than being independent constants that drift out of step as the
     # account grows.
-    ladder = ProfitEngine.ladder(paper_mgr.current_equity or INITIAL_EQUITY)
+    ladder = ProfitEngine.ladder(_total_equity(paper_mgr, INITIAL_EQUITY), mode=LADDER_MODE)
     RISK_PROFILE['max_capital_pct'] = ladder['max_capital_pct']
     effective_slots = min(MAX_OPEN_TRADES, ladder['recommended_slots'])
     logger.info(f"  Ladder: {ladder['note']} | concentration cap "
@@ -885,7 +928,7 @@ def run_eod():
 
     # ── Step 4: one orchestrated cycle ───────────────────────────────────────
     orchestrator = TradingOrchestrator(
-        paper_mgr, bot.signal_gen, SECTOR_MAP, profile='aggressive',
+        paper_mgr, bot.signal_gen, SECTOR_MAP, profile='growth',
         trades_csv=TRADES_CSV,
     )
     report = orchestrator.run(
@@ -947,7 +990,13 @@ def run_eod():
         logger.warning(f"  Daily brief not sent ({e})")
 
     logger.info("\n  ── CAPITAL ──────────────────────────────────────────────────")
-    logger.info(f"  Equity                : ₹{summary.get('current_equity', 0):>12,.2f}")
+    total_eq = _total_equity(paper_mgr, INITIAL_EQUITY)
+    growth = (total_eq / INITIAL_EQUITY - 1) * 100
+    logger.info(f"  Equity (total)        : ₹{total_eq:>12,.2f}   ({growth:+.2f}% on "
+                f"₹{INITIAL_EQUITY:,} start)")
+    logger.info(f"  Compounding base      : ₹{total_eq:>12,.2f}   "
+                f"— every rupee of realised P&L is redeployed; next position sizes "
+                f"off this, not off ₹{INITIAL_EQUITY:,}")
     logger.info(f"  Free Cash             : ₹{summary.get('free_cash',      0):>12,.2f}")
     logger.info(f"  Total P&L             : ₹{summary.get('total_pnl',      0):>+12,.2f}")
     if summary.get('closed_trades', 0) > 0:
