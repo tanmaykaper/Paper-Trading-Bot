@@ -260,9 +260,76 @@ RISK_CALIBRATIONS = {
                                            # against realised R as soon as ~40 trades carry
                                            # a quality_score
     },
+    'growth': {
+        # ── Derived, not chosen ───────────────────────────────────────────
+        # A Monte Carlo over the barrier geometry (see design notes) swept risk
+        # per trade from 1.1% to 9% of equity. Median 300-session growth PEAKS
+        # near 4.5% and then declines while drawdown keeps rising — the
+        # geometric-growth penalty for over-betting. The 'aggressive' profile
+        # was sitting at ~1.1%, roughly quarter-Kelly, because max_capital_pct
+        # bound long before risk_pct_per_trade did. Effective risk per trade is
+        # concentration x stop width, not the risk dial, and nothing was
+        # reconciling the two.
+        #
+        # This profile fixes that by making RISK-BASED sizing the binding
+        # constraint for most names and leaving concentration as a cap for the
+        # extremes. The side effect is deliberate: a low-volatility name needs
+        # an enormous notional to reach the risk target, so it gets capped and
+        # effectively de-prioritised, while a higher-volatility name sizes to
+        # target. The book tilts toward names that can actually move.
+        # 3 concurrent positions in a CASH account means concentration cannot
+        # exceed ~33% without leverage that does not exist. That caps effective
+        # risk near 2% of equity on a 6% stop — short of the 4.5% growth
+        # optimum, and unreachable without either fewer positions or margin.
+        # The sweep says 3 x 33% still beats 2 x 50% on median and on downside
+        # (₹66,618 vs ₹65,104, 6% vs 12% chance of finishing down), so the
+        # extra diversification is worth more than the extra risk per trade.
+        'risk_pct_per_trade':    0.035,   # rarely binds; concentration does
+        'max_capital_pct':       0.35,
+
+        # ── Higher R:R, paid for with a longer horizon ────────────────────
+        # RR_max = reach_fraction * sqrt(H) / k_stop_max. At H=18 the ceiling is
+        # 1.80; a 2.20 floor is arithmetically unreachable there. H=30 lifts the
+        # ceiling to 2.84, which is what makes the higher floor feasible. The
+        # stop cap stays at 2.60 sigma — buying R:R by tightening the stop is
+        # how the original 26 stop-outs at -0.85R happened.
+        # ── R:R is NOT free, and raising it loses money ────────────────────
+        # R:R is bought with horizon: RR_max = reach_fraction*sqrt(H)/k_stop_max.
+        # A feasibility-constrained sweep (no leverage, hold = horizon) put
+        # every long-horizon/high-R:R configuration BELOW its short-horizon
+        # equivalent — 3 slots at H=40 and R:R 3.28 returns a ₹58,782 median
+        # against ₹66,618 at H=14 and R:R 1.94. Stretching the horizon to reach
+        # a higher R:R costs more turnover than the extra R:R returns, because
+        # compounding is driven by events per unit time, not by payoff per event.
+        # So the floor sits just under what a 14-session horizon can actually
+        # deliver, and the horizon is kept short deliberately.
+        'min_rr':                1.70,
+        'reach_fraction':        1.35,
+        'tgt_mult_momentum':     2.60,
+        'tgt_mult_reversion':    2.20,
+
+        # ── Universe: volatility is the raw material ──────────────────────
+        # E[R] per trade is roughly flat in volatility, but rupees per trade are
+        # not: the same R on a 2.6%/day name is worth 37% more than on a
+        # 1.9%/day one. The sweep measured +₹2,800 over 300 sessions from this
+        # alone. Turnover floor drops to admit liquid midcaps; the price floor
+        # rises because tick noise matters more with wider stops.
+        'min_median_turnover':   2.0e7,
+        'min_price':             35.0,
+        'min_adx':              13,
+        'min_efficiency_ratio':  0.09,
+        'base_quality':          0.40,
+
+        # ── Economics ─────────────────────────────────────────────────────
+        # Larger positions carry the flat charge far better, so the floor can
+        # fall and the hurdle can ease without the cost ratio degrading.
+        'max_flat_cost_bps':    28.0,
+        'cost_hurdle_mult':      1.10,
+        'edge_tilt':             0.80,
+    },
 }
 
-ACTIVE_CALIBRATION = 'aggressive'
+ACTIVE_CALIBRATION = 'growth'
 
 
 def apply_calibration(name):
