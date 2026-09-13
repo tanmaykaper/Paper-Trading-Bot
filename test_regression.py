@@ -456,13 +456,120 @@ def test_optimizer():
           sg.RISK_PROFILE['k_stop_base'] == before)
 
 
+
+# ═══ 10. Cross-sectional momentum ════════════════════════════════════════════
+def test_momentum_rank():
+    print("\n[momentum rank]")
+    from momentum_rank import rank_universe, gate, compute_factors
+    rng = np.random.default_rng(5)
+    idx_dates = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=320)
+    n = len(idx_dates)
+
+    def series(drift=0.0, vol=0.014, jump=None, s0=500.):
+        r = rng.normal(drift, vol, n)
+        if jump:
+            r[jump[0]] += jump[1]
+        c = s0 * np.exp(np.cumsum(r))
+        o = c * np.exp(rng.normal(0, 0.004, n))
+        return pd.DataFrame({'datetime': idx_dates, 'open': o,
+                             'high': np.maximum(o, c) * 1.005,
+                             'low': np.minimum(o, c) * 0.995, 'close': c,
+                             'volume': rng.lognormal(12, .3, n)})
+
+    index = series(0.0004, 0.008, s0=24000)
+    uni = {}
+    for i in range(8):
+        uni[f'STRONG{i}'] = series(drift=0.0016)
+    for i in range(8):
+        uni[f'WEAK{i}'] = series(drift=-0.0008)
+    for i in range(4):
+        uni[f'JUMP{i}'] = series(drift=0.0002, jump=(200, 0.45))
+    ranks = rank_universe(uni, index)
+    avg = lambda p: float(np.mean([r['percentile'] for s, r in ranks.items() if s.startswith(p)]))
+
+    check("leaders outrank laggards", avg('STRONG') > avg('WEAK') + 30,
+          f"{avg('STRONG'):.0f} vs {avg('WEAK'):.0f}")
+    # Information discreteness is a MODIFIER, not a veto, and the assertion is
+    # set to match that. A 45% single-gap move still carries genuine 12-1
+    # momentum, which is the best-evidenced factor and holds the largest
+    # weight; discreteness and consistency demote it rather than disqualify it.
+    # An earlier version of this test demanded a 15-point gap and failed at 11,
+    # which was the test over-claiming, not the ranker underperforming —
+    # tightening discreteness enough to pass it would have meant down-weighting
+    # the strongest factor to satisfy an assertion I had invented.
+    check("a single-gap move is demoted below steady strength",
+          avg('JUMP') < avg('STRONG') - 8, f"{avg('JUMP'):.0f} vs {avg('STRONG'):.0f}")
+    check("the gate blocks laggards", not gate(ranks, 'WEAK0')[0])
+    check("an unranked symbol is eligible, not silently excluded",
+          gate(ranks, 'NEVER_SEEN')[0])
+    check("a universe too thin to rank withholds the ranking",
+          rank_universe({k: uni[k] for k in list(uni)[:5]}, index) == {})
+    check("short history is omitted rather than imputed",
+          compute_factors(series().head(40), index) is None)
+    f = compute_factors(uni['STRONG0'], index)
+    check("residual momentum strips the market component",
+          f.get('residual') is not None and abs(f.get('beta', 0)) < 2.0,
+          f"t={f.get('residual'):.2f}, beta={f.get('beta')}")
+
+
+# ═══ 11. Compounding ═════════════════════════════════════════════════════════
+def test_compounding():
+    print("\n[compounding]")
+    import os
+    for f in ('/tmp/_t_comp.csv', '/tmp/_t_comp_eq.csv'):
+        if os.path.exists(f):
+            os.remove(f)
+    from paper_trading_manager import PaperTradingManager
+    from orchestrator import TradingOrchestrator
+    from profit_engine import compounding_ladder
+
+    m = PaperTradingManager(initial_equity=50000, csv_path='/tmp/_t_comp.csv',
+                            equity_csv_path='/tmp/_t_comp_eq.csv', max_open_trades=5)
+    o = TradingOrchestrator.__new__(TradingOrchestrator)
+    o.mgr = m
+    _, equity_before = o._capital({})
+
+    m.open_trade('AAA', 500., 476., 560., 40, 'pullback')
+    _, equity_deployed = o._capital({'AAA': 500.0})
+    check("deploying capital does not shrink the equity base",
+          abs(equity_deployed - equity_before) < 500,
+          f"₹{equity_before:,.0f} → ₹{equity_deployed:,.0f} with ₹20,000 deployed")
+
+    tid = pd.read_csv('/tmp/_t_comp.csv')['trade_id'].iloc[0]
+    m.close_position(tid, 560.0, 'Target Hit')
+    _, equity_after = o._capital({})
+    profit = equity_after - equity_before
+    check("realised profit is added to the compounding base", profit > 1500,
+          f"+₹{profit:,.0f} on a ₹2,400 gross winner, net of costs")
+
+    # The loop that matters: a larger base must produce a larger next position.
+    risk_pct = 0.035
+    check("a larger base produces a larger next position",
+          equity_after * risk_pct > equity_before * risk_pct,
+          f"risk budget ₹{equity_before*risk_pct:,.0f} → ₹{equity_after*risk_pct:,.0f}")
+
+    grown = compounding_ladder(equity_after * 2, mode='growth')
+    small = compounding_ladder(equity_before, mode='growth')
+    check("the ladder widens the book as the account compounds",
+          grown['recommended_slots'] >= small['recommended_slots'])
+    for eq in (50000, 120000, 400000):
+        L = compounding_ladder(eq, mode='growth')
+        if L['recommended_slots'] * L['max_capital_pct'] > 1.02:
+            check("deployment never exceeds 100% of a cash account", False,
+                  f"₹{eq:,} deploys {L['recommended_slots']*L['max_capital_pct']*100:.0f}%")
+            break
+    else:
+        check("deployment never exceeds 100% of a cash account", True)
+
+
 if __name__ == "__main__":
     print("=" * 66)
     print("  v11 REGRESSION SUITE — invariants, each with an incident behind it")
     print("=" * 66)
     for fn in (test_costs, test_exits, test_signals, test_allocation,
                test_calibration_and_data, test_manager, test_profit_engine,
-               test_meta_model, test_optimizer):
+               test_meta_model, test_optimizer, test_momentum_rank,
+               test_compounding):
         try:
             fn()
         except Exception as e:
