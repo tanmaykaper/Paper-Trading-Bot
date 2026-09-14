@@ -562,6 +562,36 @@ def test_compounding():
         check("deployment never exceeds 100% of a cash account", True)
 
 
+
+# ═══ 12. Profile coherence across modules ════════════════════════════════════
+def test_profile_coherence():
+    print("\n[profile coherence]")
+    import market_state, profit_engine, exit_manager, portfolio_allocator
+    import entry_execution, signal_generator
+    registries = [('market_state', market_state.STATE_PROFILES, market_state.get_profile),
+                  ('profit_engine', profit_engine.PROFIT_PROFILES, profit_engine.get_profile),
+                  ('exit_manager', exit_manager.EXIT_PROFILES, exit_manager.get_profile),
+                  ('portfolio_allocator', portfolio_allocator.ALLOCATOR_PROFILES,
+                   portfolio_allocator.get_profile),
+                  ('entry_execution', entry_execution.EXECUTION_PROFILES,
+                   entry_execution.get_profile)]
+
+    # The orchestrator passes ONE profile name to all of these. A module missing
+    # it raised KeyError mid-run — and because the backtest engine catches
+    # per-bar exceptions, every bar after the first fill failed silently.
+    names = set(signal_generator.RISK_CALIBRATIONS)
+    for label, registry, _ in registries:
+        missing = names - set(registry)
+        check(f"{label} knows every profile name", not missing, f"missing {sorted(missing)}")
+
+    for label, _, getter in registries:
+        try:
+            got = getter('does_not_exist')
+            check(f"{label} falls back on an unknown profile", isinstance(got, dict))
+        except Exception as e:
+            check(f"{label} falls back on an unknown profile", False, repr(e))
+
+
 if __name__ == "__main__":
     print("=" * 66)
     print("  v11 REGRESSION SUITE — invariants, each with an incident behind it")
@@ -569,7 +599,7 @@ if __name__ == "__main__":
     for fn in (test_costs, test_exits, test_signals, test_allocation,
                test_calibration_and_data, test_manager, test_profit_engine,
                test_meta_model, test_optimizer, test_momentum_rank,
-               test_compounding):
+               test_compounding, test_profile_coherence):
         try:
             fn()
         except Exception as e:
