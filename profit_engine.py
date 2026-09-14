@@ -115,13 +115,34 @@ PROFIT_PROFILES = {
         'pyramid_stop_r':       1.50,   # combined stop rides this far under price on each add
         'min_trades_for_curve': 12,
     },
+    'growth': {
+        # Pyramiding matters more here than in any other profile: a 3-slot book
+        # has few positions, so the ones that work have to be made to count.
+        # The trigger is early and two adds are permitted, with the stop
+        # ratcheting on each so total open risk falls rather than rises.
+        'curve_ma_bars':        20,
+        'curve_scale_max':      1.30,
+        'curve_scale_min':      0.60,
+        'curve_sensitivity':    7.0,
+        'pyramid_enabled':      True,
+        'pyramid_trigger_r':    1.00,
+        'pyramid_size_pct':     0.60,
+        'pyramid_max_adds':     2,
+        'pyramid_stop_r':       1.50,
+        'min_trades_for_curve': 12,
+    },
 }
 
-ACTIVE_PROFILE = 'aggressive'  # 'growth' inherits these; see PROFIT_PROFILES
+ACTIVE_PROFILE = 'growth'
 
 
 def get_profile(name=None):
-    return PROFIT_PROFILES[name or ACTIVE_PROFILE]
+    """Falls back rather than raising — see market_state.get_profile for why."""
+    key = name or ACTIVE_PROFILE
+    if key not in PROFIT_PROFILES:
+        logger.warning(f"profit_engine: no '{key}' profile — falling back to '{ACTIVE_PROFILE}'")
+        key = ACTIVE_PROFILE
+    return PROFIT_PROFILES[key]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
