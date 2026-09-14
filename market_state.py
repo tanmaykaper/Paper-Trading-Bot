@@ -133,6 +133,8 @@ STATE_PROFILES = {
     },
 }
 
+BUILD = '2026-09-14.4'   # sparse-breadth-row fix; bump when this file changes
+
 ACTIVE_PROFILE = 'growth'
 
 # Component weights for the gradual risk score. Breadth carries the most
