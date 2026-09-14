@@ -56,6 +56,8 @@ from data_fetcher_free import data_quality
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+BUILD = '2026-09-14.4'   # as_of staleness fix; bump when this file changes
+
 STATE_JSON = 'orchestrator_state.json'
 
 # Only the strongest tier of the universe is tradeable. 70 = top 30%.
