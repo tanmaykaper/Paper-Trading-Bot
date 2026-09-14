@@ -149,7 +149,12 @@ ACTIVE_PROFILE = 'growth'
 
 
 def get_profile(name=None):
-    return EXIT_PROFILES[name or ACTIVE_PROFILE]
+    """Falls back rather than raising — see market_state.get_profile for why."""
+    key = name or ACTIVE_PROFILE
+    if key not in EXIT_PROFILES:
+        logger.warning(f"exit_manager: no '{key}' profile — falling back to '{ACTIVE_PROFILE}'")
+        key = ACTIVE_PROFILE
+    return EXIT_PROFILES[key]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
