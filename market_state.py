@@ -110,9 +110,30 @@ STATE_PROFILES = {
         'quality_add_at_zero':     0.12,
         'min_slots':               1,
     },
+    'growth': {
+        # Matched to the growth calibration. Slightly quicker to restore
+        # exposure than 'aggressive', because a 3-slot book on a 14-session
+        # horizon has fewer chances to participate and a long clamp costs it
+        # proportionally more. The defensive TRIGGERS are untouched — they are
+        # the only part of this module with direct evidence behind them (three
+        # entry weeks at a 0% win rate), and loosening them to chase turnover
+        # would trade the floor for the ceiling.
+        'exposure_ceiling':        1.15,
+        'exposure_floor':          0.00,
+        'risk_on_threshold':       0.54,
+        'risk_off_threshold':      0.34,
+        'defensive_clamp':         0.25,
+        'cooldown_bars':           3,
+        'recovery_breadth':        0.44,
+        'recovery_breadth_alt':    0.34,
+        'recovery_quiet_bars':     5,
+        'recovery_step':           0.30,
+        'quality_add_at_zero':     0.12,
+        'min_slots':               1,
+    },
 }
 
-ACTIVE_PROFILE = 'aggressive'
+ACTIVE_PROFILE = 'growth'
 
 # Component weights for the gradual risk score. Breadth carries the most
 # because it is the only sensor here that leads rather than confirms; index
@@ -127,7 +148,21 @@ COMPONENT_WEIGHTS = {
 
 
 def get_profile(name=None):
-    return STATE_PROFILES[name or ACTIVE_PROFILE]
+    """
+    Falls back to the active profile rather than raising on an unknown name.
+
+    An unknown profile name is a configuration mismatch across modules, not a
+    reason to take the daily run down — and this exact break happened: a
+    'growth' profile was added to three modules and not to this one, so the
+    orchestrator crashed before a single bar was evaluated. Degrading loudly
+    beats failing silently, and both beat a KeyError at 09:00.
+    """
+    key = name or ACTIVE_PROFILE
+    if key not in STATE_PROFILES:
+        logger.warning(f"market_state: no '{key}' profile — falling back to "
+                       f"'{ACTIVE_PROFILE}'. Profiles have drifted between modules.")
+        key = ACTIVE_PROFILE
+    return STATE_PROFILES[key]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
