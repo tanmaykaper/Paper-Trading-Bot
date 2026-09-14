@@ -168,7 +168,12 @@ MOMENTUM_TILT = 0.20
 
 
 def get_profile(name=None):
-    return ALLOCATOR_PROFILES[name or ACTIVE_PROFILE]
+    """Falls back rather than raising — see market_state.get_profile for why."""
+    key = name or ACTIVE_PROFILE
+    if key not in ALLOCATOR_PROFILES:
+        logger.warning(f"portfolio_allocator: no '{key}' profile — falling back to '{ACTIVE_PROFILE}'")
+        key = ACTIVE_PROFILE
+    return ALLOCATOR_PROFILES[key]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
