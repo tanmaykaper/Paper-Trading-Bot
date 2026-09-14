@@ -53,7 +53,8 @@ from technical_indicators import TechnicalIndicators
 from fundamental_screener import FundamentalScreener
 from signal_generator import SignalGenerator
 from data_fetcher_free import DataFetcherFree
-from backtest_engine import WalkForwardBacktest, summarise, print_comparison
+from backtest_engine import (WalkForwardBacktest, summarise, print_comparison,
+                             print_sensitivity)
 from backtest_analytics import compute_performance_report, print_performance_report
 from run_paper_trading import (SCAN_UNIVERSE, SECTOR_MAP, INITIAL_EQUITY,
                                MAX_OPEN_TRADES, MAX_HOLD_DAYS)
@@ -63,13 +64,21 @@ logger = logging.getLogger(__name__)
 
 # ── Knobs ────────────────────────────────────────────────────────────────────
 UNIVERSE_LIMIT = 30          # raise once a small run looks sane; None = full universe
-HISTORY_BARS   = 420         # fetched per symbol
-WARMUP_BARS    = 300         # bars reserved for indicator warm-up; simulation starts after
+
+# get_historical_data(days=N) starts N+60 CALENDAR days back, so a request for
+# 420 returns only ~330 trading bars. The first full-universe run asked for 420,
+# received 328, and with a 300-bar warmup simulated 28 sessions — a window far
+# too short to conclude anything from. Trading days are ~69% of calendar days,
+# so the request is now sized in calendar terms and the warmup is set from what
+# the indicators actually need: momentum_rank is the hungriest at ~157 bars.
+HISTORY_FETCH_DAYS = 700     # ~480 trading bars
+WARMUP_BARS        = 200     # leaves ~280 test sessions
 PROFILE        = 'aggressive'
+RUN_SENSITIVITY = False      # True multiplies runtime by ~15; an overnight job
 CACHE_PATH     = 'backtest_universe.pkl'   # so a re-run does not re-fetch
 
 
-def load_universe(symbols, bars=HISTORY_BARS, use_cache=True):
+def load_universe(symbols, bars=HISTORY_FETCH_DAYS, use_cache=True):
     """
     Fetch once, cache to disk. Re-fetching 30-100 symbols on every iteration is
     the slowest part of a short run and the most likely to be rate-limited —
@@ -87,12 +96,12 @@ def load_universe(symbols, bars=HISTORY_BARS, use_cache=True):
 
     fetcher = DataFetcherFree()
     logger.info(f"📥 Fetching {len(symbols)} symbols x {bars} bars — this is the slow part")
-    index_df = fetcher.get_historical_data('^NSEI', days=bars + 120, min_bars=250)
+    index_df = fetcher.get_historical_data('^NSEI', days=bars + 120, min_bars=200)
     vix_df = fetcher.get_historical_data('^INDIAVIX', days=bars + 60, min_bars=30)
 
     universe = {}
     for i, symbol in enumerate(symbols, 1):
-        df = fetcher.get_historical_data(symbol, days=bars, min_bars=WARMUP_BARS + 20)
+        df = fetcher.get_historical_data(symbol, days=bars, min_bars=WARMUP_BARS + 30)
         if df is not None:
             universe[symbol] = df
         if i % 10 == 0:
@@ -146,8 +155,15 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 78)
     print("NSE SWING TRADING BOT — WALK-FORWARD VALIDATION  v6")
-    print(f"Universe: {len(universe)} symbols | bars {WARMUP_BARS}→{HISTORY_BARS} "
-          f"| equity ₹{INITIAL_EQUITY:,} | slots {MAX_OPEN_TRADES} | hold {MAX_HOLD_DAYS}")
+    n_bars = min(len(index_df), min((len(d) for d in universe.values()), default=0))
+    slots = ProfitEngine.ladder(INITIAL_EQUITY)['recommended_slots']
+    print(f"Universe: {len(universe)} symbols | {n_bars} bars, simulating "
+          f"{max(n_bars - WARMUP_BARS, 0)} sessions after a {WARMUP_BARS}-bar warmup")
+    print(f"Equity ₹{INITIAL_EQUITY:,} | slots {slots} (from the growth ladder) | "
+          f"hold {MAX_HOLD_DAYS} | profile {PROFILE}")
+    if n_bars - WARMUP_BARS < 100:
+        print(f"  ⚠ only {n_bars - WARMUP_BARS} test sessions — too short to conclude from. "
+              f"Raise HISTORY_FETCH_DAYS or lower WARMUP_BARS.")
     print("=" * 78)
 
     # ── Lookahead first ──────────────────────────────────────────────────────
@@ -168,7 +184,7 @@ if __name__ == "__main__":
     print("\n\n########## RUN D — FULL STACK (current live policy) ##########")
     trades_d, equity_d = wf.run_stack(universe, index_df, vix_df=vix_df,
                                       fundamentals=fundamentals, start=WARMUP_BARS,
-                                      base_slots=MAX_OPEN_TRADES,
+                                      base_slots=slots,
                                       max_hold_days=MAX_HOLD_DAYS, tag='D')
 
     # ── Run C' ───────────────────────────────────────────────────────────────
@@ -208,6 +224,17 @@ if __name__ == "__main__":
             df.to_csv(f'backtest_results_run_{tag}.csv', index=False)
     if equity_d is not None and len(equity_d):
         equity_d.to_csv('backtest_equity_curve_run_d.csv', index=False)
+
+    # ── Sensitivity ──────────────────────────────────────────────────────────
+    # Off by default: it multiplies runtime by the number of values swept. Turn
+    # it on for the one overnight run that decides a configuration, because a
+    # single backtest number cannot distinguish an edge from a setting.
+    if RUN_SENSITIVITY:
+        sens = wf.sensitivity(universe, index_df, vix_df=vix_df, fundamentals=fundamentals,
+                              start=WARMUP_BARS, base_slots=MAX_OPEN_TRADES,
+                              max_hold_days=MAX_HOLD_DAYS)
+        sens.to_csv('backtest_sensitivity.csv', index=False)
+        print_sensitivity(sens)
 
     print("\nRead D vs C' first — that is the whole question this file exists to answer:")
     print("did the execution, exit and allocation work pay for itself on real history?")
