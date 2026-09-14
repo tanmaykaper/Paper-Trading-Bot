@@ -239,10 +239,21 @@ class BreadthPanel:
         p = self.panel if when is None else self.panel.loc[:when]
         if p.empty:
             return None
-        row = p.iloc[-1]
-        if float(row.get('n_symbols', 0)) < self.min_symbols:
+
+        # Symbols do not all end on the same date — a delisted name, a
+        # different listing history, or simply an uneven fetch leaves the union
+        # index with a final row populated by only a handful of them. Taking
+        # iloc[-1] blindly then reads n_symbols as too few and withholds
+        # breadth ENTIRELY, which is what produced "breadth=n/a" on every bar
+        # of a 106-symbol backtest and left the regime engine running on index
+        # and volatility alone — without its only leading sensor.
+        #
+        # So walk back to the most recent row that actually has a quorum. A few
+        # days of lag on breadth is a far smaller error than no breadth at all.
+        usable = p[p['n_symbols'] >= self.min_symbols]
+        if usable.empty:
             return None
-        return row
+        return usable.iloc[-1]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
