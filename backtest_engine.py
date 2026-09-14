@@ -48,6 +48,8 @@ from trading_costs import round_trip_commission
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+BUILD = '2026-09-14.4'   # sensitivity sweep added; bump when this file changes
+
 BOOK_COLUMNS = [
     'trade_id', 'trade_group_id', 'symbol', 'entry_date', 'entry_price', 'stop_loss',
     'initial_stop_loss', 'target_price', 'position_size', 'entry_type', 'status',
@@ -301,6 +303,68 @@ class WalkForwardBacktest:
 
         return book.trades(), pd.DataFrame(equity)
 
+
+    # ─────────────────────────────────────────────────────────────────────────
+    def sensitivity(self, universe_dfs, index_df, vix_df=None, fundamentals=None,
+                    start=250, base_slots=3, max_hold_days=14, sweeps=None):
+        """
+        Re-run the full stack with ONE constant changed at a time.
+
+        A single backtest number cannot distinguish an edge from a setting. If
+        the result collapses when the stop floor moves from 1.50 to 1.70 sigma,
+        what was measured was that constant, not the strategy — and the honest
+        response is to distrust the headline, not to keep the winning value.
+        Conversely, a result that holds across a band of settings is evidence
+        the edge is in the signal rather than in the tuning.
+        
+        Each row is a complete walk-forward run, so this multiplies runtime by
+        the number of values swept. It is off by default in run_backtest.py for
+        that reason, and belongs in the one overnight job that decides a
+        configuration.
+        
+        Returns a DataFrame; pass it to print_sensitivity().
+        """
+        import signal_generator as sg
+        import portfolio_allocator as pa
+
+        sweeps = sweeps or {
+            'k_stop_base':      [1.30, 1.50, 1.70],
+            'min_rr':           [1.50, 1.70, 1.90],
+            'reach_fraction':   [1.20, 1.35, 1.50],
+            'base_quality':     [0.36, 0.40, 0.46],
+            'kelly_lambda':     [0.35, 0.45, 0.55],
+        }
+        rows = []
+        for name, values in sweeps.items():
+            in_sg = name in sg.RISK_PROFILE
+            registry = sg.RISK_PROFILE if in_sg else pa.ALLOCATOR_PROFILES[pa.ACTIVE_PROFILE]
+            if name not in registry:
+                logger.warning(f"  sensitivity: '{name}' not found in any profile — skipped")
+                continue
+            original = registry[name]
+            for value in values:
+                registry[name] = value
+                try:
+                    trades, equity = self.run_stack(
+                        universe_dfs, index_df, vix_df=vix_df, fundamentals=fundamentals,
+                        start=start, base_slots=base_slots, max_hold_days=max_hold_days,
+                        tag=f'S_{name}_{value}')
+                    s = summarise(trades, equity, self.initial_equity, f'{name}={value}')
+                except Exception as e:
+                    logger.error(f"  sensitivity {name}={value} failed: {e}")
+                    s = {'n': 0}
+                finally:
+                    registry[name] = original     # always restore, even on failure
+                rows.append({'parameter': name, 'value': value,
+                             'baseline': original == value,
+                             'trades': s.get('n', 0), 'win_rate': s.get('win_rate'),
+                             'net_pnl': s.get('net_pnl'), 'return_pct': s.get('return_pct'),
+                             'expectancy': s.get('expectancy'),
+                             'max_dd_pct': s.get('max_dd_pct')})
+                logger.info(f"  sensitivity {name}={value}: {rows[-1]['trades']} trades, "
+                            f"{rows[-1]['return_pct']}%")
+        return pd.DataFrame(rows)
+
     # ─────────────────────────────────────────────────────────────────────────
     def assert_no_lookahead(self, universe_dfs, index_df, fundamentals=None,
                             bar=300, sample=8):
@@ -392,4 +456,39 @@ def print_comparison(a, b):
         if va is None and vb is None:
             continue
         print(f"  {k:<16}{str(va):>26}{str(vb):>26}")
+    print("=" * 78 + "\n")
+
+
+def print_sensitivity(table):
+    """
+    Sensitivity table, flagging results that hinge on a single constant.
+
+    The verdict line is the point: a strategy whose return swings from +18% to
+    -6% across three plausible values of one parameter has not been measured,
+    it has been fitted — and the correct reading is that the headline number is
+    not trustworthy, whichever value produced it.
+    """
+    if table is None or len(table) == 0:
+        print("\n  Sensitivity: no results.\n")
+        return
+    print("\n" + "=" * 78)
+    print("  PARAMETER SENSITIVITY — one constant changed at a time")
+    print("=" * 78)
+    print(f"  {'parameter':<18}{'value':>8}{'trades':>8}{'win%':>7}{'return':>9}"
+          f"{'expect':>10}{'maxDD':>8}")
+    for param, group in table.groupby('parameter', sort=False):
+        for _, r in group.iterrows():
+            mark = ' *' if r.get('baseline') else '  '
+            ret = '—' if pd.isna(r['return_pct']) else f"{r['return_pct']:+.2f}%"
+            win = '—' if pd.isna(r['win_rate']) else f"{r['win_rate']:.0f}"
+            exp = '—' if pd.isna(r['expectancy']) else f"{r['expectancy']:+.0f}"
+            dd = '—' if pd.isna(r['max_dd_pct']) else f"{r['max_dd_pct']:.1f}%"
+            print(f"  {param:<18}{r['value']:>8}{int(r['trades']):>8}{win:>7}{ret:>9}"
+                  f"{exp:>10}{dd:>8}{mark}")
+        spread = group['return_pct'].max() - group['return_pct'].min()
+        if pd.notna(spread):
+            verdict = ('STABLE' if spread < 8 else
+                       'SENSITIVE' if spread < 20 else 'FRAGILE — result is the setting')
+            print(f"  {'':<18}spread {spread:.1f}pp across the band → {verdict}\n")
+    print("  * = the value currently configured")
     print("=" * 78 + "\n")
