@@ -222,6 +222,17 @@ def test_calibration_and_data():
     fresh['datetime'] = idx
     check("a fresh frame is accepted", data_quality(fresh)['tradeable'])
 
+    # The bug that voided the first full-universe backtest: staleness was
+    # measured against the wall clock, so inside a walk-forward every sliced
+    # frame read as weeks old and the whole universe was rejected.
+    hist_idx = pd.bdate_range(end=pd.Timestamp.today() - pd.Timedelta(days=60), periods=40)
+    hist = bars(len(hist_idx)).iloc[:len(hist_idx)].copy()
+    hist['datetime'] = hist_idx
+    check("a historical frame is stale against the wall clock",
+          not data_quality(hist)['tradeable'])
+    check("...but fresh against its own simulated date",
+          data_quality(hist, as_of=hist_idx[-1])['tradeable'])
+
 
 # ═══ 6. Manager and end-to-end ═══════════════════════════════════════════════
 def test_manager():
@@ -502,6 +513,19 @@ def test_momentum_rank():
     check("the gate blocks laggards", not gate(ranks, 'WEAK0')[0])
     check("an unranked symbol is eligible, not silently excluded",
           gate(ranks, 'NEVER_SEEN')[0])
+    # Symbols ending on different dates left the union index's final row with
+    # too few members, so breadth was withheld on every bar of a 106-symbol
+    # backtest and the regime engine lost its only leading sensor.
+    from market_state import BreadthPanel
+    uneven = {}
+    for i, (name, df) in enumerate(uni.items()):
+        uneven[name] = df.iloc[:len(df) - (i % 4)]
+    panel = BreadthPanel(uneven, min_symbols=10)
+    row = panel.at()
+    check("breadth survives symbols ending on different dates",
+          row is not None and int(row['n_symbols']) >= 10,
+          f"n_symbols={None if row is None else int(row['n_symbols'])}")
+
     check("a universe too thin to rank withholds the ranking",
           rank_universe({k: uni[k] for k in list(uni)[:5]}, index) == {})
     check("short history is omitted rather than imputed",
