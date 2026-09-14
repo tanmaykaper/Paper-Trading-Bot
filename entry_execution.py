@@ -87,13 +87,41 @@ EXECUTION_PROFILES = {
         'max_gap_up_sigma':       1.30,
         'max_slippage_sigma':     0.80,
     },
+    'growth': {
+        # Wider stops and a 14-session horizon mean a fraction of a sigma of
+        # entry slippage matters less than it does on a tight-stop trade, so
+        # the bar for routing to a patient limit is higher still and the
+        # tolerance for taking the open is wider. A 3-slot book also cannot
+        # afford unfilled bids: a missed entry is a third of the book idle.
+        'chase_extension_sigma':  2.60,
+        'chase_close_position':   0.92,
+        'wide_bar_atr':           2.40,
+        'limit_pullback_sigma':   0.30,
+        'limit_valid_bars':       2,
+        'max_gap_up_sigma':       1.40,
+        'max_slippage_sigma':     0.90,
+    },
 }
 
-ACTIVE_PROFILE = 'aggressive'
+ACTIVE_PROFILE = 'growth'
 
 
 def get_profile(name=None):
-    return EXECUTION_PROFILES[name or ACTIVE_PROFILE]
+    """
+    Falls back rather than raising.
+
+    This module was the one place a 'growth' profile was NOT added when the
+    other five got one, and the KeyError surfaced only after a position had
+    been opened — because the pending-order book is the first thing to ask for
+    the profile by name. Every bar after the first fill failed, silently, inside
+    the backtest engine's per-bar exception handler. A fallback turns a
+    configuration drift into a logged warning instead of a dead run.
+    """
+    key = name or ACTIVE_PROFILE
+    if key not in EXECUTION_PROFILES:
+        logger.warning(f"entry_execution: no '{key}' profile — falling back to '{ACTIVE_PROFILE}'")
+        key = ACTIVE_PROFILE
+    return EXECUTION_PROFILES[key]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
