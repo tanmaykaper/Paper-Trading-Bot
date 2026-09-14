@@ -183,6 +183,7 @@ class TradingOrchestrator:
         self.profit = ProfitEngine(profile)
         self.funnel_extra = {}
         self.ranks = {}
+        self.as_of = None
         self.momentum_threshold = MOMENTUM_GATE_PERCENTILE
         # Hand the probability chain to the signal generator, so the EV gate
         # and Kelly both read measured probability rather than an asserted
@@ -208,6 +209,22 @@ class TradingOrchestrator:
 
         prices = {s: float(df['close'].iloc[-1]) for s, df in universe_dfs.items()
                   if df is not None and len(df)}
+
+        # The "current" date is the last bar of the index frame, NOT the wall
+        # clock. Inside a walk-forward every frame is sliced to the simulated
+        # bar, so a wall-clock staleness check reads the entire universe as
+        # weeks out of date and rejects all of it — which is exactly what
+        # happened: 32 of 32 momentum-eligible symbols were dropped as "stale
+        # feed, delisting or suspension" on every single bar, generate_signal
+        # was never called once, and the backtest reported zero trades from a
+        # pipeline that was working.
+        as_of = None
+        try:
+            if index_df is not None and 'datetime' in index_df and len(index_df):
+                as_of = pd.to_datetime(index_df['datetime'].iloc[-1])
+        except Exception:
+            as_of = None
+        self.as_of = as_of
 
         # ── 1. Market state ──────────────────────────────────────────────────
         panel = BreadthPanel(universe_dfs)
@@ -456,7 +473,7 @@ class TradingOrchestrator:
             if not eligible:
                 self.funnel_extra[why[:60]] = self.funnel_extra.get(why[:60], 0) + 1
                 continue
-            quality = data_quality(df)
+            quality = data_quality(df, as_of=getattr(self, 'as_of', None))
             if not quality['tradeable']:
                 self.funnel_extra[quality['reason'][:60]] = \
                     self.funnel_extra.get(quality['reason'][:60], 0) + 1
