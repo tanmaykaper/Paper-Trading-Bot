@@ -47,6 +47,7 @@
 import logging
 import os
 
+import numpy as np
 import pandas as pd
 
 from technical_indicators import TechnicalIndicators
@@ -73,7 +74,7 @@ UNIVERSE_LIMIT = 30          # raise once a small run looks sane; None = full un
 # the indicators actually need: momentum_rank is the hungriest at ~157 bars.
 HISTORY_FETCH_DAYS = 700     # ~480 trading bars
 WARMUP_BARS        = 200     # leaves ~280 test sessions
-PROFILE        = 'aggressive'
+PROFILE        = 'growth'    # must match ACTIVE_PROFILE in the six modules
 RUN_SENSITIVITY = False      # True multiplies runtime by ~15; an overnight job
 CACHE_PATH     = 'backtest_universe.pkl'   # so a re-run does not re-fetch
 
@@ -114,7 +115,107 @@ def load_universe(symbols, bars=HISTORY_FETCH_DAYS, use_cache=True):
     return universe, index_df, vix_df
 
 
+
+REQUIRED_BUILD = '2026-09-14.4'
+
+
+def preflight():
+    """
+    Refuse to run against stale or inconsistent modules.
+
+    Two full-universe backtests in a row reported zero trades from a pipeline
+    that was working. Neither output said why — the first because a wall-clock
+    staleness check silently rejected every sliced frame, the second because
+    the fixed files had not reached the machine at all. A backtest that quietly
+    validates the wrong code is worse than one that refuses to start, because
+    its numbers look like findings.
+
+    Every check below corresponds to a defect that actually produced a void
+    run, and names the file to replace rather than reporting that something is
+    wrong.
+    """
+    import inspect
+    problems = []
+
+    # 1. Staleness must be measured against the SIMULATED date. Without this,
+    #    every frame in a walk-forward reads as weeks old and the entire
+    #    universe is rejected before generate_signal is ever called.
+    try:
+        from data_fetcher_free import data_quality
+        if 'as_of' not in inspect.signature(data_quality).parameters:
+            problems.append("data_quality() has no 'as_of' parameter — staleness will use "
+                            "the wall clock and reject every symbol. Replace data_fetcher_free.py.")
+        else:
+            idx = pd.bdate_range(end=pd.Timestamp.today() - pd.Timedelta(days=60), periods=40)
+            hist = pd.DataFrame({'datetime': idx, 'open': 100.0, 'high': 101.0, 'low': 99.0,
+                                 'close': np.linspace(100, 110, len(idx)), 'volume': 1e5})
+            if not data_quality(hist, as_of=idx[-1])['tradeable']:
+                problems.append("data_quality() rejects a frame fresh relative to its own "
+                                "simulated date. Replace data_fetcher_free.py.")
+    except ImportError as e:
+        problems.append(f"cannot import data_quality: {e}")
+
+    # 2. The orchestrator must derive and pass that date.
+    try:
+        import orchestrator
+        if 'as_of' not in inspect.getsource(orchestrator.TradingOrchestrator._scan):
+            problems.append("orchestrator._scan() does not pass as_of to data_quality(). "
+                            "Replace orchestrator.py.")
+    except Exception as e:
+        problems.append(f"cannot inspect orchestrator: {e}")
+
+    # 3. Breadth must survive symbols whose histories end on different dates,
+    #    or the regime engine loses its only leading sensor.
+    try:
+        import market_state
+        if 'n_symbols' not in inspect.getsource(market_state.BreadthPanel.at):
+            problems.append("BreadthPanel.at() lacks the quorum walk-back — breadth will "
+                            "read n/a on uneven histories. Replace market_state.py.")
+    except Exception as e:
+        problems.append(f"cannot inspect market_state: {e}")
+
+    # 4. One profile name, understood by every module that receives it. A
+    #    module missing it raised KeyError mid-run once already.
+    try:
+        import market_state as ms, profit_engine as pe, exit_manager as em
+        import portfolio_allocator as pa, entry_execution as ee, signal_generator as sg
+        registries = [('market_state', ms.STATE_PROFILES), ('profit_engine', pe.PROFIT_PROFILES),
+                      ('exit_manager', em.EXIT_PROFILES),
+                      ('portfolio_allocator', pa.ALLOCATOR_PROFILES),
+                      ('entry_execution', ee.EXECUTION_PROFILES)]
+        for label, registry in registries:
+            if PROFILE not in registry:
+                problems.append(f"{label} has no '{PROFILE}' profile. Replace {label}.py.")
+        if sg.ACTIVE_CALIBRATION != PROFILE:
+            problems.append(f"signal_generator is calibrated '{sg.ACTIVE_CALIBRATION}' but this "
+                            f"backtest runs '{PROFILE}' — the entry geometry and the risk "
+                            f"settings would come from different configurations.")
+    except Exception as e:
+        problems.append(f"cannot verify profile coherence: {e}")
+
+    # 5. Build stamps.
+    for mod_name in ('orchestrator', 'market_state', 'data_fetcher_free', 'backtest_engine'):
+        try:
+            mod = __import__(mod_name)
+            if getattr(mod, 'BUILD', None) != REQUIRED_BUILD:
+                problems.append(f"{mod_name}.py BUILD is {getattr(mod, 'BUILD', 'absent')}, "
+                                f"expected {REQUIRED_BUILD}. Replace {mod_name}.py.")
+        except Exception as e:
+            problems.append(f"cannot import {mod_name}: {e}")
+
+    if problems:
+        print("\n" + "!" * 78)
+        print("  PREFLIGHT FAILED — not running. Fix these first:")
+        print("!" * 78)
+        for p in problems:
+            print(f"  x {p}")
+        print("!" * 78 + "\n")
+        raise SystemExit(1)
+    print(f"Preflight: OK (build {REQUIRED_BUILD}, profile '{PROFILE}')")
+
+
 if __name__ == "__main__":
+    preflight()
     symbols = SCAN_UNIVERSE[:UNIVERSE_LIMIT] if UNIVERSE_LIMIT else SCAN_UNIVERSE
     universe, index_df, vix_df = load_universe(symbols)
 
