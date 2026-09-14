@@ -17,6 +17,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Symbols that must NOT have .NS appended
+BUILD = '2026-09-14.4'   # data_quality(as_of=...); bump when this file changes
+
 _INDEX_SYMBOLS = {'^NSEI', '^BSESN', '^NSEBANK', '^NSMIDCP'}
 
 
