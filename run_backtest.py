@@ -54,6 +54,7 @@ from technical_indicators import TechnicalIndicators
 from fundamental_screener import FundamentalScreener
 from signal_generator import SignalGenerator
 from data_fetcher_free import DataFetcherFree
+from profit_engine import ProfitEngine
 from backtest_engine import (WalkForwardBacktest, summarise, print_comparison,
                              print_sensitivity)
 from backtest_analytics import compute_performance_report, print_performance_report
@@ -202,6 +203,39 @@ def preflight():
                                 f"expected {REQUIRED_BUILD}. Replace {mod_name}.py.")
         except Exception as e:
             problems.append(f"cannot import {mod_name}: {e}")
+
+    # 6. Every name used in this file must resolve. A NameError 260 lines in —
+    #    after the universe has been fetched — is the cheapest possible bug to
+    #    catch and the most expensive one to hit, because the failure arrives
+    #    twenty minutes into a run that has already done all its slow work.
+    try:
+        import ast as _ast, builtins as _bi
+        tree = _ast.parse(open(__file__).read())
+        defined = {n.id for x in _ast.walk(tree) if isinstance(x, _ast.Assign)
+                   for n in _ast.walk(x.targets[0]) if isinstance(n, _ast.Name)}
+        defined |= {x.name for x in _ast.walk(tree)
+                    if isinstance(x, (_ast.FunctionDef, _ast.ClassDef))}
+        defined |= {a.asname or a.name.split('.')[0] for x in _ast.walk(tree)
+                    if isinstance(x, (_ast.Import, _ast.ImportFrom)) for a in x.names}
+        defined |= {t.id for x in _ast.walk(tree) if isinstance(x, (_ast.For, _ast.comprehension))
+                    for t in _ast.walk(x.target) if isinstance(t, _ast.Name)}
+        defined |= {a.arg for x in _ast.walk(tree)
+                    if isinstance(x, _ast.FunctionDef) for a in x.args.args}
+        defined |= {h.name for h in _ast.walk(tree)
+                    if isinstance(h, _ast.ExceptHandler) and h.name}
+        defined |= {a.arg for x in _ast.walk(tree)
+                    if isinstance(x, _ast.Lambda) for a in x.args.args}
+        # Module dunders are always bound at runtime; f-string format specs
+        # ({value:s}) parse as Name nodes and are not identifiers at all.
+        defined |= {'__file__', '__name__', '__doc__', '__package__', 's', 'd', 'f', 'g'}
+        used = {n.id for n in _ast.walk(tree)
+                if isinstance(n, _ast.Name) and isinstance(n.ctx, _ast.Load)}
+        unresolved = sorted(used - defined - set(dir(_bi)))
+        if unresolved:
+            problems.append(f"names used but never imported or defined in run_backtest.py: "
+                            f"{unresolved} — add the missing import(s).")
+    except Exception:
+        pass
 
     if problems:
         print("\n" + "!" * 78)
