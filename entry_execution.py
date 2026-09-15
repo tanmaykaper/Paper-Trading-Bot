@@ -85,7 +85,8 @@ EXECUTION_PROFILES = {
         'limit_pullback_sigma':   0.35,
         'limit_valid_bars':       3,
         'max_gap_up_sigma':       1.30,
-        'max_slippage_sigma':     0.80,
+        'max_slippage_sigma':     0.35,
+        'max_slippage_pct':       0.007,
     },
     'growth': {
         # Wider stops and a 14-session horizon mean a fraction of a sigma of
@@ -99,7 +100,29 @@ EXECUTION_PROFILES = {
         'limit_pullback_sigma':   0.30,
         'limit_valid_bars':       2,
         'max_gap_up_sigma':       1.40,
-        'max_slippage_sigma':     0.90,
+
+        # ── What you pay for the entry is the strongest predictor in the data ─
+        # Across 46 backtested trades, entry slippage correlates with P&L at
+        # spearman -0.444 (p=0.002) — and -0.533 (p=0.006) among non-rotated
+        # trades alone, so it is NOT a restatement of the churn problem. By
+        # slippage quartile:
+        #
+        #   Q1  filled 1.18% BELOW the signal close   mean +₹722   58% win
+        #   Q2  filled 0.05% below                    mean +₹161   36% win
+        #   Q3  filled 0.14% above                    mean -₹389   18% win
+        #   Q4  filled 0.53% above                    mean -₹189   33% win
+        #
+        # Taking only fills at or below the signal close: 20 trades, +₹11,935,
+        # 55% win — more than the entire run's +₹3,868 net. Paying up means
+        # buying after the move has begun, on worse R:R, with re-anchoring
+        # shrinking the position on top.
+        #
+        # 0.90σ was far too loose: on a 2.6%/day name around ₹600 that permits
+        # ~2.3% of slippage, deep into the quartile that loses money. 0.25σ is
+        # roughly 0.65%, and max_slippage_pct is a hard absolute backstop for
+        # low-volatility names where a sigma multiple is still too generous.
+        'max_slippage_sigma':     0.25,
+        'max_slippage_pct':       0.005,
     },
 }
 
@@ -160,12 +183,12 @@ def route(details, profile=None):
     if bar_range_atr >= P['wide_bar_atr']:
         reasons.append(f'bar range {bar_range_atr:.1f}x ATR')
 
-    # Two independent tells required, not one. Routing on any single condition
-    # sent 73% of signals to a resting bid in testing and forfeited 40% of them
-    # unfilled — on a trending tape the entries you skip are disproportionately
-    # the ones that ran. Demanding confluence keeps the patient route for bars
-    # that are exhausted on more than one reading.
-    if len(reasons) >= 2:
+    # ONE tell is now enough. An earlier synthetic test argued for demanding
+    # two, on the grounds that patient bids forfeit entries that run — but real
+    # data reversed that: fills at or below the signal close carried the whole
+    # run (+₹11,935 over 20 trades), while fills above it lost money. A missed
+    # entry costs an opportunity; a paid-up entry costs rupees.
+    if len(reasons) >= 1:
         limit = _round_tick(close - P['limit_pullback_sigma'] * sigma, mode='down')
         return {'mode': 'LIMIT_RETEST', 'limit_price': limit,
                 'valid_until_bars': P['limit_valid_bars'],
@@ -201,9 +224,18 @@ def attempt_fill(plan, bar, details, profile=None):
 
     if plan['mode'] == 'MARKET_OPEN':
         slip_sigma = (o - ref) / sigma
+        slip_pct = (o / ref - 1.0) if ref > 0 else 0.0
+        # Two ceilings, because a sigma multiple alone is too permissive on a
+        # low-volatility name and an absolute percentage alone is too strict on
+        # a high-volatility one. Whichever binds first wins.
         if slip_sigma > P['max_slippage_sigma']:
             return {'status': 'ABANDONED', 'fill_price': None,
-                    'reason': f'open gapped {slip_sigma:.2f}σ above the signal close'}
+                    'reason': f'open gapped {slip_sigma:.2f}σ above the signal close '
+                              f'(cap {P["max_slippage_sigma"]:.2f}σ)'}
+        if slip_pct > P.get('max_slippage_pct', 1.0):
+            return {'status': 'ABANDONED', 'fill_price': None,
+                    'reason': f'open gapped {slip_pct*100:+.2f}% above the signal close '
+                              f'(cap {P["max_slippage_pct"]*100:.2f}%)'}
         return {'status': 'FILLED', 'fill_price': round(o, 2),
                 'reason': f'market on open ({slip_sigma:+.2f}σ vs signal close)'}
 
