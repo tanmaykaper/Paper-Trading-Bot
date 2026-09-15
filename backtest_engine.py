@@ -334,8 +334,40 @@ class WalkForwardBacktest:
             'base_quality':     [0.36, 0.40, 0.46],
             'kelly_lambda':     [0.35, 0.45, 0.55],
         }
+        # Frequency dials matter more than payoff dials once utilisation is the
+        # binding constraint, so they are swept by default.
+        try:
+            import orchestrator as _orc
+            sweeps.setdefault('momentum_gate', [60.0, 70.0, 80.0])
+        except Exception:
+            pass
         rows = []
         for name, values in sweeps.items():
+            if name == 'momentum_gate':
+                import orchestrator as _orc
+                original = _orc.MOMENTUM_GATE_PERCENTILE
+                for value in values:
+                    _orc.MOMENTUM_GATE_PERCENTILE = value
+                    try:
+                        trades, equity = self.run_stack(
+                            universe_dfs, index_df, vix_df=vix_df, fundamentals=fundamentals,
+                            start=start, base_slots=base_slots, max_hold_days=max_hold_days,
+                            tag=f'S_mom_{value}')
+                        s = summarise(trades, equity, self.initial_equity,
+                                      f'momentum_gate={value}', base_slots)
+                    except Exception as e:
+                        logger.error(f"  sensitivity momentum_gate={value} failed: {e}")
+                        s = {'n': 0}
+                    finally:
+                        _orc.MOMENTUM_GATE_PERCENTILE = original
+                    rows.append({'parameter': name, 'value': value,
+                                 'baseline': original == value, 'trades': s.get('n', 0),
+                                 'win_rate': s.get('win_rate'), 'net_pnl': s.get('net_pnl'),
+                                 'return_pct': s.get('return_pct'),
+                                 'expectancy': s.get('expectancy'),
+                                 'max_dd_pct': s.get('max_dd_pct')})
+                continue
+
             in_sg = name in sg.RISK_PROFILE
             registry = sg.RISK_PROFILE if in_sg else pa.ALLOCATOR_PROFILES[pa.ACTIVE_PROFILE]
             if name not in registry:
@@ -414,7 +446,7 @@ class WalkForwardBacktest:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-def summarise(trades, equity, initial_equity, label):
+def summarise(trades, equity, initial_equity, label, slots=None):
     """
     Compact standalone summary. backtest_analytics.compute_performance_report
     accepts the same two frames for the full Sharpe/Sortino/Calmar report with
@@ -429,6 +461,17 @@ def summarise(trades, equity, initial_equity, label):
         run_max = eq.cummax()
         dd = float(((run_max - eq) / run_max.replace(0, np.nan)).max() or 0.0)
     wins, losses = pnl[pnl > 0], pnl[pnl <= 0]
+
+    # Slot utilisation: the share of available capital-time actually deployed.
+    # Its absence is why a run whose expectancy rose 72% and whose costs fell
+    # 46% still returned the same number — the trade count had halved and
+    # nothing in the report said the book was two-thirds in cash.
+    util = None
+    if equity is not None and len(equity) and 'hold_days' in trades and slots:
+        used = float(trades['hold_days'].astype(float).sum())
+        available = float(len(equity) * slots)
+        util = round(used / available * 100, 1) if available > 0 else None
+
     return {
         'label': label, 'n': int(len(pnl)),
         'win_rate': round(float((pnl > 0).mean()) * 100, 1),
@@ -442,16 +485,21 @@ def summarise(trades, equity, initial_equity, label):
                      if 'hold_days' in trades else None),
         'total_cost': (round(float(trades['commission'].astype(float).sum()), 2)
                        if 'commission' in trades else None),
+        'utilisation_pct': util,
     }
 
 
 def print_comparison(a, b):
+    """Utilisation is printed alongside return because the two together say
+    something neither says alone: a modest return on 30% utilisation is a
+    frequency problem, the same return on 80% is an edge problem, and they call
+    for opposite fixes."""
     print("\n" + "=" * 78)
     print(f"  {a['label']}   vs   {b['label']}")
     print("=" * 78)
     print(f"  {'metric':<16}{a['label'][:24]:>26}{b['label'][:24]:>26}")
     for k in ['n', 'win_rate', 'net_pnl', 'return_pct', 'expectancy', 'profit_factor',
-              'max_dd_pct', 'avg_hold', 'total_cost']:
+              'max_dd_pct', 'avg_hold', 'total_cost', 'utilisation_pct']:
         va, vb = a.get(k), b.get(k)
         if va is None and vb is None:
             continue
