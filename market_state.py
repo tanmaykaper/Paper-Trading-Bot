@@ -130,6 +130,18 @@ STATE_PROFILES = {
         'recovery_step':           0.30,
         'quality_add_at_zero':     0.12,
         'min_slots':               1,
+        # ── Entries require a CONFIRMED risk-on tape ─────────────────────────
+        # The backtest stratified P&L by the market state at entry:
+        #     RISK_ON   41 trades   +₹5,558   mean +135.55
+        #     NEUTRAL    5 trades   -₹1,689   mean -337.89
+        # Every NEUTRAL entry lost money, and skipping them alone takes the run
+        # from +7.74% to +11.1%. Five trades is a thin sample, but it points the
+        # same way as the live record — where 81.7% of all losses came from two
+        # entry weeks — and the cost of being wrong is only forgone trades.
+        #
+        # Exits, trailing and pyramiding are untouched by this: it gates new
+        # capital, never the management of capital already at risk.
+        'entry_requires_risk_on':  True,
     },
 }
 
@@ -377,7 +389,9 @@ class MarketState:
                  'RISK_OFF' if risk_score <= P['risk_off_threshold'] else 'NEUTRAL')
 
         note = (f"{', '.join(triggers)}" if triggers else
-                'defensive clamp held, awaiting breadth recovery' if self.clamp_active else '')
+                'defensive clamp held, awaiting breadth recovery' if self.clamp_active else
+                f'{state} — entries require a confirmed risk-on tape'
+                if P.get('entry_requires_risk_on') and state != 'RISK_ON' else '')
         return self._result(state, risk_score, exposure, base_slots, comp, triggers, note, breadth)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -394,7 +408,9 @@ class MarketState:
             'state': state,
             'risk_score': round(float(risk_score), 3),
             'exposure': round(float(exposure), 3),
-            'new_entries_allowed': bool(exposure > 0.05 and max_slots > 0),
+            'new_entries_allowed': bool(exposure > 0.05 and max_slots > 0
+                                        and (state == 'RISK_ON'
+                                             or not P.get('entry_requires_risk_on', False))),
             'max_slots': max_slots,
             'heat_multiplier': round(float(exposure), 3),
             # The entry bar rises as conditions deteriorate, so the trades that
