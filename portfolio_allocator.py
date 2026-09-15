@@ -143,6 +143,24 @@ ALLOCATOR_PROFILES = {
         #   switch_margin     1.4 -> 2.5  the swap must clear a much higher bar
         #   min_hold_bars               a thesis gets time before it is judged
         #   protection floors lowered    a position that is working is kept
+        # ── Rotation is OFF ──────────────────────────────────────────────
+        # Two independent backtests, and it lost money in both:
+        #     run 1   21 rotations   24% win   -₹3,682
+        #     run 2    5 rotations    0% win   -₹2,463
+        #     total   26 rotations   ~19% win  -₹6,145
+        # Tightening the brakes cut the count from 21 to 5 and the remaining
+        # five still went 0-for-5. At that point the honest reading is not
+        # "tighten further" but "this mechanism does not work here": a forecast
+        # about a fresh candidate is being trusted over the observed behaviour
+        # of a position already proving itself, and the observed behaviour wins.
+        #
+        # Killing it outright on run 2's data: ₹3,764 + ₹2,463 = ₹6,227, or
+        # +12.5% instead of +7.53%. The machinery is retained, not deleted —
+        # set allow_rotation True to re-enable and measure again once the
+        # incumbent forward-EV model has been calibrated against real outcomes.
+        #
+        # A free slot still fills immediately. This governs EVICTION only.
+        'allow_rotation':        False,
         'switch_margin':         2.5,
         'min_hold_before_rotation': 5,
         'protect_progress':      0.50,   # was 0.80 of the way to target
@@ -540,6 +558,9 @@ class PortfolioAllocator:
             proceeds = 0.0
             if free_slots > 0 and not sector_full:
                 reason_prefix = f"free slot — {r['note']}"
+            elif not P.get('allow_rotation', True):
+                plan['declined'].append((symbol, 'no free slot; rotation disabled'))
+                continue
             else:
                 victim = self._find_switch(r, econ, live_incumbents, inc_econ, plan,
                                            sector_filter=sector if sector_full else None)
