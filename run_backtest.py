@@ -335,8 +335,20 @@ if __name__ == "__main__":
     print_performance_report(
         compute_performance_report(trades_c, equity_c, INITIAL_EQUITY),
         title="RUN C' — PRE-UPGRADE POLICY, SAME SIGNALS")
-    print_comparison(summarise(trades_d, equity_d, INITIAL_EQUITY, "RUN D full stack"),
-                     summarise(trades_c, equity_c, INITIAL_EQUITY, "RUN C' legacy policy"))
+    print_comparison(summarise(trades_d, equity_d, INITIAL_EQUITY, "RUN D full stack", slots),
+                     summarise(trades_c, equity_c, INITIAL_EQUITY, "RUN C' legacy policy",
+                               MAX_OPEN_TRADES))
+
+    util = summarise(trades_d, equity_d, INITIAL_EQUITY, 'd', slots).get('utilisation_pct')
+    if util is not None:
+        print(f"  Slot utilisation: {util:.0f}% of available capital-time deployed.")
+        if util < 45:
+            print(f"  -> Below ~45% the constraint is CANDIDATE FLOW, not edge: expectancy")
+            print(f"     per trade cannot lift the return if the book is mostly in cash.")
+            print(f"     Widen the universe before loosening any filter.")
+        elif util > 80:
+            print(f"  -> Above ~80% the book is saturated; more candidates will not help.")
+            print(f"     Further gains have to come from expectancy or from more slots.")
 
     # ── The breakdowns that say WHY, not just how much ───────────────────────
     if trades_d is not None and len(trades_d):
