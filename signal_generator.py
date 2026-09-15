@@ -325,7 +325,16 @@ RISK_CALIBRATIONS = {
         # fall and the hurdle can ease without the cost ratio degrading.
         'max_flat_cost_bps':    28.0,
         'cost_hurdle_mult':      1.10,
-        'edge_tilt':             0.80,
+        # ── Measured, not asserted ──────────────────────────────────────────
+        # edge_tilt converts the entry-quality score into claimed edge. The
+        # backtest says that score is close to useless as a continuous signal:
+        # correlation with P&L of +0.028, and quartile means of +260, -237,
+        # -232, +557 — the top quartile works and the middle two are noise.
+        # Leaving the tilt at 0.80 lets a number with no measured gradient
+        # inflate p_win, which then drives both the EV gate and the Kelly
+        # stake. Halved until calibration.py or meta_model.py demonstrates
+        # out-of-sample skill and can carry the estimate properly.
+        'edge_tilt':             0.40,
     },
 }
 
@@ -369,7 +378,27 @@ PATTERN_PRIOR = {
     'momentum_burst': (0,   0.000),
     'ema_cross':      (0,   0.000),
 }
-PRIOR_SHRINK_K = 12.0     # trades needed for 50% trust in a pattern's own realised mean
+PRIOR_SHRINK_K = 12.0
+
+# ── Retired patterns ────────────────────────────────────────────────────────
+# Two independent samples agree, which is what makes this actionable rather
+# than curve-fitting to one run:
+#
+#   pattern       live n / win    backtest n / win    combined
+#   breakout        13 / 7.7%          1 / 0%       14 / 7.2%
+#   bb_squeeze       4 / 0%            2 / 0%        6 / 0%
+#   engulfing        2 / 0%            2 / 0%        4 / 0%
+#
+# 24 trades, ~4% win rate, and in the backtest these five trades alone cost
+# -₹3,143 against a +₹3,868 total — removing them takes the same run from
+# +7.7% to +14.0%. Neither sample is large on its own; together, and pointing
+# the same way, they clear the bar.
+#
+# Detection is left intact so patterns_triggered still records them (they count
+# toward confluence and stay visible in the logs). They simply cannot be the
+# PRIMARY pattern, so they never name a trade or set its geometry. Re-enable by
+# emptying this set once there is contrary evidence.
+RETIRED_PATTERNS = {'breakout', 'bb_squeeze', 'engulfing'}     # trades needed for 50% trust in a pattern's own realised mean
 
 MOMENTUM_PATTERNS = {'breakout', 'momentum_burst', 'bb_squeeze', 'ema_cross'}
 
@@ -698,10 +727,15 @@ class SignalGenerator:
         if not active_patterns:
             return 'HOLD', {'reason': 'No pattern triggered'}
 
+        tradeable = [p for p in active_patterns if p not in RETIRED_PATTERNS]
+        if not tradeable:
+            return 'HOLD', {'reason': f'Only retired pattern(s) fired: '
+                                      f'{", ".join(active_patterns)}'}
+
         # Primary = best shrunk realised expectancy among those firing, so the
         # trade is named, geometried and credited by its strongest component
         # rather than by dictionary order.
-        primary = max(active_patterns, key=shrunk_pattern_expectancy)
+        primary = max(tradeable, key=shrunk_pattern_expectancy)
 
         # ── Gate 5: entry quality ────────────────────────────────────────────
         quality, q_parts = self._entry_quality(
