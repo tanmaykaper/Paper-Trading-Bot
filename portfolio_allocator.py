@@ -130,7 +130,23 @@ ALLOCATOR_PROFILES = {
         'max_portfolio_heat':    0.14,   # 3 positions at ~2% + pyramid adds
         'heat_floor':            0.40,
         'drawdown_soft_max':     0.30,
-        'switch_margin':         1.4,
+        # ── Rotation discipline ──────────────────────────────────────────
+        # In the backtest, 21 of 46 exits (46%) were Slot Rotation, and average
+        # hold came in at 6.5 days against a 14-day planned horizon — positions
+        # were being cut at under half their designed life, before the geometry
+        # they were sized for had a chance to express. Each of those rotations
+        # paid a full ~₹58 round trip, ~₹1,218 in total, on a run that netted
+        # ₹3,868.
+        #
+        # Three brakes, all on the EVICTION side only — a free slot still fills
+        # immediately:
+        #   switch_margin     1.4 -> 2.5  the swap must clear a much higher bar
+        #   min_hold_bars               a thesis gets time before it is judged
+        #   protection floors lowered    a position that is working is kept
+        'switch_margin':         2.5,
+        'min_hold_before_rotation': 5,
+        'protect_progress':      0.50,   # was 0.80 of the way to target
+        'protect_r_multiple':    0.30,   # was +0.75R
         'max_correlation':       0.85,
         'max_per_sector':        2,
         'min_edge_roc_per_day':  0.0004,
@@ -313,6 +329,7 @@ def incumbent_economics(trade, evaluation, current_price, profile=None,
         'n_broken': n_broken,
         'stagnant': bool(evaluation.get('stagnant')),
         'r_multiple': float(evaluation.get('r_multiple', 0.0)),
+        'held': held,
         'progress_to_target': ((price - entry) / (target - entry)) if target > entry else 0.0,
         'p_forward': round(p, 3),
     }
@@ -672,7 +689,18 @@ class PortfolioAllocator:
                 continue
 
             thesis_intact = (econ_i['n_broken'] < 2) and not econ_i['stagnant']
-            if thesis_intact and (econ_i['progress_to_target'] > 0.80 or econ_i['r_multiple'] > 0.75):
+
+            # A position that has not had time to express its thesis cannot
+            # fairly be compared against a fresh forecast: its remaining reward
+            # is still large and its realised progress is necessarily near zero,
+            # so the arithmetic favours the challenger purely because the
+            # incumbent is young. Give it the minimum hold unless something has
+            # actually broken.
+            if thesis_intact and econ_i.get('held', 99) < P.get('min_hold_before_rotation', 0):
+                continue
+
+            if thesis_intact and (econ_i['progress_to_target'] > P.get('protect_progress', 0.80)
+                                  or econ_i['r_multiple'] > P.get('protect_r_multiple', 0.75)):
                 continue                                  # earning its slot, leave it alone
 
             gain_rupees = ((cand_econ['roc_per_day'] - econ_i['roc_per_day'])
