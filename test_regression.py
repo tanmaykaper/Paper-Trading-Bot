@@ -616,6 +616,44 @@ def test_profile_coherence():
             check(f"{label} falls back on an unknown profile", False, repr(e))
 
 
+
+# ═══ 13. Entry-slippage discipline ═══════════════════════════════════════════
+def test_slippage_discipline():
+    print("\n[entry slippage]")
+    import entry_execution as ee
+    P = ee.get_profile('growth')
+    check("slippage caps are tight enough to matter",
+          P['max_slippage_sigma'] <= 0.35 and P.get('max_slippage_pct', 1) <= 0.006,
+          f"{P['max_slippage_sigma']}σ / {P.get('max_slippage_pct')*100:.2f}%")
+
+    bar = lambda o: pd.Series({'open': o, 'high': o * 1.01, 'low': o * 0.99, 'close': o})
+    det = {'entry_price': 600.0, 'indicators': {'sigma_abs': 15.6}}
+    plan = {'mode': 'MARKET_OPEN'}
+
+    # The measured edge sits entirely in fills at or below the signal close.
+    check("a fill below the signal close is taken",
+          ee.attempt_fill(plan, bar(597.0), det)['status'] == 'FILLED')
+    check("a small premium is still taken",
+          ee.attempt_fill(plan, bar(601.0), det)['status'] == 'FILLED')
+    check("paying up past the cap is abandoned",
+          ee.attempt_fill(plan, bar(604.0), det)['status'] == 'ABANDONED')
+    check("a large gap up is abandoned",
+          ee.attempt_fill(plan, bar(612.0), det)['status'] == 'ABANDONED')
+
+    # A low-volatility name: the sigma cap alone would wave through a premium
+    # the percentage cap correctly refuses.
+    quiet = {'entry_price': 600.0, 'indicators': {'sigma_abs': 40.0}}
+    check("the absolute cap backstops low-volatility names",
+          ee.attempt_fill(plan, bar(606.0), quiet)['status'] == 'ABANDONED',
+          "+1.0% on a wide-sigma name")
+
+    import signal_generator as sg
+    check("edge_tilt is reduced while quality remains unproven",
+          sg.RISK_PROFILE['edge_tilt'] <= 0.5, f"edge_tilt={sg.RISK_PROFILE['edge_tilt']}")
+    check("retired patterns cannot be primary",
+          sg.RETIRED_PATTERNS == {'breakout', 'bb_squeeze', 'engulfing'})
+
+
 if __name__ == "__main__":
     print("=" * 66)
     print("  v11 REGRESSION SUITE — invariants, each with an incident behind it")
@@ -623,7 +661,7 @@ if __name__ == "__main__":
     for fn in (test_costs, test_exits, test_signals, test_allocation,
                test_calibration_and_data, test_manager, test_profit_engine,
                test_meta_model, test_optimizer, test_momentum_rank,
-               test_compounding, test_profile_coherence):
+               test_compounding, test_profile_coherence, test_slippage_discipline):
         try:
             fn()
         except Exception as e:
