@@ -357,6 +357,103 @@ HIGH_GROWTH_MOMENTUM_UNIVERSE = [
 
 SCAN_UNIVERSE = LARGECAP_UNIVERSE + MIDCAP_UNIVERSE + HIGH_GROWTH_MOMENTUM_UNIVERSE
 
+# ── Universe expansion ──────────────────────────────────────────────────────
+# The backtest's binding constraint stopped being trade quality and became IDLE
+# CAPITAL. With 3 slots over 249 sessions the book had 747 slot-days available
+# and used 237 — 32% utilisation. Expectancy per trade had risen 72% and costs
+# fallen 46%, yet the return did not move, because the trade count halved at the
+# same time and the two cancelled exactly.
+#
+# More names at the SAME selectivity is the one lever that raises frequency
+# without touching the bar: every filter — momentum top-30%, entry quality,
+# economics, slippage — stays exactly where it is, and simply sees more
+# candidates. Loosening a filter instead would buy frequency by lowering
+# quality, which is the trade this run just proved is not worth making.
+#
+# Liquid NSE names only; the ₹2cr turnover floor and the data-quality check
+# will drop anything illiquid or stale on their own, so a bad ticker here
+# costs one skipped fetch, not a bad trade.
+EXPANSION_UNIVERSE = [
+    # IT
+    'OFSS', 'CYIENT', 'SONATSOFTW', 'BIRLASOFT', 'ZENSARTECH', 'NEWGEN',
+    'TATATECH', 'MASTEK',
+    # BANK
+    'IDFCFIRSTB', 'BANDHANBNK', 'CANBK', 'PNB', 'BANKBARODA', 'UNIONBANK',
+    'INDIANB', 'KARURVYSYA', 'CUB', 'JKBANK',
+    # NBFC
+    'MUTHOOTFIN', 'MANAPPURAM', 'LICHSGFIN', 'PFC', 'RECLTD', 'SBICARD',
+    'IIFL', 'POONAWALLA', 'SHRIRAMFIN', 'ABCAPITAL',
+    # PHARMA
+    'LUPIN', 'GLENMARK', 'ZYDUSLIFE', 'BIOCON', 'LAURUSLABS', 'NATCOPHARM',
+    'AJANTPHARM', 'ERIS', 'FDC', 'SUVENPHAR',
+    # AUTO
+    'HEROMOTOCO', 'TVSMOTOR', 'ASHOKLEY', 'BHARATFORG', 'ENDURANCE', 'SUNDRMFAST',
+    'EXIDEIND', 'AMARAJABAT', 'CEATLTD', 'MRF',
+    # FMCG
+    'DABUR', 'GODREJCP', 'COLPAL', 'EMAMILTD', 'JYOTHYLAB', 'BAJAJCON',
+    'ZYDUSWELL', 'HATSUN',
+    # METAL
+    'VEDL', 'NMDC', 'NATIONALUM', 'JINDALSTEL', 'SAIL', 'APLAPOLLO',
+    'WELCORP', 'JSL',
+    # CEMENT
+    'SHREECEM', 'AMBUJACEM', 'ACC', 'DALBHARAT', 'JKCEMENT', 'RAMCOCEM',
+    'STARCEMENT',
+    # CAPGOODS
+    'CUMMINSIND', 'THERMAX', 'AIAENG', 'TIMKEN', 'SCHAEFFLER', 'KEI',
+    'POLYCAB', 'HAVELLS', 'VOLTAS', 'BLUESTARCO',
+    # CHEMICALS
+    'PIIND', 'SRF', 'ATUL', 'FINEORG', 'CLEAN', 'TATACHEM',
+    'GHCL', 'NOCIL', 'ALKYLAMINE',
+    # INFRA
+    'NCC', 'KALPATPOWR', 'IRB', 'GMRINFRA', 'RVNL', 'IRCON',
+    'ENGINERSIN', 'HGINFRA',
+    # REALTY
+    'OBEROIRLTY', 'PRESTIGE', 'BRIGADE', 'MAHLIFE', 'ANANTRAJ',
+    # ENERGY
+    'IOC', 'HINDPETRO', 'PETRONET', 'IGL', 'MGL', 'OIL',
+    'COALINDIA', 'NTPC', 'POWERGRID', 'TORNTPOWER',
+    # CONSUMER
+    'TRENT', 'ABFRL', 'VMART', 'METROBRAND', 'BATAINDIA', 'RELAXO',
+    'PAGEIND', 'DEVYANI', 'JUBLFOOD', 'SAPPHIRE',
+    # TELECOM
+    'INDUSTOWER', 'TEJASNET', 'HFCL', 'ITI',
+    # NEWAGE_TECH
+    'SWIGGY', 'FIRSTCRY', 'OLAELEC', 'IXIGO', 'TBOTEK', 'ZAGGLE',
+    'RATEGAIN',
+    # HEALTHCARE
+    'APOLLOHOSP', 'MAXHEALTH', 'FORTIS', 'NH', 'MEDANTA', 'KIMS',
+    'LALPATHLAB', 'METROPOLIS',
+    # DEFENCE
+    'GARFIBRES', 'APOLLOMICRO', 'SIKA', 'IDEAFORGE',
+    # RENEWABLE_EV
+    'KPIGREEN', 'GENSOL', 'SWSOLAR', 'ORIENTGREEN',
+]
+
+SECTOR_MAP.update({s: sec for sec, syms in {
+    'IT': ['OFSS', 'CYIENT', 'SONATSOFTW', 'BIRLASOFT', 'ZENSARTECH', 'NEWGEN', 'TATATECH', 'MASTEK'],
+    'BANK': ['IDFCFIRSTB', 'BANDHANBNK', 'CANBK', 'PNB', 'BANKBARODA', 'UNIONBANK', 'INDIANB', 'KARURVYSYA', 'CUB', 'JKBANK'],
+    'NBFC': ['MUTHOOTFIN', 'MANAPPURAM', 'LICHSGFIN', 'PFC', 'RECLTD', 'SBICARD', 'IIFL', 'POONAWALLA', 'SHRIRAMFIN', 'ABCAPITAL'],
+    'PHARMA': ['LUPIN', 'GLENMARK', 'ZYDUSLIFE', 'BIOCON', 'LAURUSLABS', 'NATCOPHARM', 'AJANTPHARM', 'ERIS', 'FDC', 'SUVENPHAR'],
+    'AUTO': ['HEROMOTOCO', 'TVSMOTOR', 'ASHOKLEY', 'BHARATFORG', 'ENDURANCE', 'SUNDRMFAST', 'EXIDEIND', 'AMARAJABAT', 'CEATLTD', 'MRF'],
+    'FMCG': ['DABUR', 'GODREJCP', 'COLPAL', 'EMAMILTD', 'JYOTHYLAB', 'BAJAJCON', 'ZYDUSWELL', 'HATSUN'],
+    'METAL': ['VEDL', 'NMDC', 'NATIONALUM', 'JINDALSTEL', 'SAIL', 'APLAPOLLO', 'WELCORP', 'JSL'],
+    'CEMENT': ['SHREECEM', 'AMBUJACEM', 'ACC', 'DALBHARAT', 'JKCEMENT', 'RAMCOCEM', 'STARCEMENT'],
+    'CAPGOODS': ['CUMMINSIND', 'THERMAX', 'AIAENG', 'TIMKEN', 'SCHAEFFLER', 'KEI', 'POLYCAB', 'HAVELLS', 'VOLTAS', 'BLUESTARCO'],
+    'CHEMICALS': ['PIIND', 'SRF', 'ATUL', 'FINEORG', 'CLEAN', 'TATACHEM', 'GHCL', 'NOCIL', 'ALKYLAMINE'],
+    'INFRA': ['NCC', 'KALPATPOWR', 'IRB', 'GMRINFRA', 'RVNL', 'IRCON', 'ENGINERSIN', 'HGINFRA'],
+    'REALTY': ['OBEROIRLTY', 'PRESTIGE', 'BRIGADE', 'MAHLIFE', 'ANANTRAJ'],
+    'ENERGY': ['IOC', 'HINDPETRO', 'PETRONET', 'IGL', 'MGL', 'OIL', 'COALINDIA', 'NTPC', 'POWERGRID', 'TORNTPOWER'],
+    'CONSUMER': ['TRENT', 'ABFRL', 'VMART', 'METROBRAND', 'BATAINDIA', 'RELAXO', 'PAGEIND', 'DEVYANI', 'JUBLFOOD', 'SAPPHIRE'],
+    'TELECOM': ['INDUSTOWER', 'TEJASNET', 'HFCL', 'ITI'],
+    'NEWAGE_TECH': ['SWIGGY', 'FIRSTCRY', 'OLAELEC', 'IXIGO', 'TBOTEK', 'ZAGGLE', 'RATEGAIN'],
+    'HEALTHCARE': ['APOLLOHOSP', 'MAXHEALTH', 'FORTIS', 'NH', 'MEDANTA', 'KIMS', 'LALPATHLAB', 'METROPOLIS'],
+    'DEFENCE': ['GARFIBRES', 'APOLLOMICRO', 'SIKA', 'IDEAFORGE'],
+    'RENEWABLE_EV': ['KPIGREEN', 'GENSOL', 'SWSOLAR', 'ORIENTGREEN'],
+}.items() for s in syms})
+
+SCAN_UNIVERSE = list(dict.fromkeys(SCAN_UNIVERSE + EXPANSION_UNIVERSE))
+
+
 
 def get_all_held_symbols(trades_csv):
     if not os.path.exists(trades_csv):
