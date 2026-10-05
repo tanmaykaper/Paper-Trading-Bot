@@ -192,10 +192,14 @@ def top_k_per_day(signal, score, k):
 # Rotation simulator (equal weight, integer shares, CNC costs)
 # ═════════════════════════════════════════════════════════════════════════════
 def simulate_rotation(P, score, eligible, n=5, band=None, every=5, capital=ROTATION_CAPITAL,
-                      risk_on=None):
+                      risk_on=None, buy_ok=None, sell_ok=None):
     """risk_on: optional per-date bool array. On a rebalance date where it is
     False the book goes to cash (sells everything at the next open, buys
-    nothing) — the classic absolute-momentum / 200-day market filter."""
+    nothing) — the classic absolute-momentum / 200-day market filter.
+    buy_ok / sell_ok: optional (date x symbol) bool arrays for the FILL bar. A
+    buy is skipped for the next candidate, and a sale waits for the next
+    rebalance, when the fill bar says it could not have traded (see
+    locked_bars: a stock frozen at its circuit limit has no other side)."""
     o, c = P.a['open'], P.a['close']
     T, N = c.shape
     band = band or 3 * n
@@ -217,7 +221,8 @@ def simulate_rotation(P, score, eligible, n=5, band=None, every=5, capital=ROTAT
         off = risk_on is not None and not bool(risk_on[t])
         # Sell: market filter off, no longer eligible, or fallen out of the band.
         for j in np.flatnonzero(qty > 0):
-            if (off or not valid[j] or rank[j] >= band) and np.isfinite(o[t + 1, j]):
+            if (off or not valid[j] or rank[j] >= band) and np.isfinite(o[t + 1, j]) \
+                    and (sell_ok is None or sell_ok[t + 1, j]):
                 v = qty[j] * o[t + 1, j]
                 fee = DEFAULT_CHARGES.cnc(0.0, v)
                 cash += v - fee
@@ -229,7 +234,7 @@ def simulate_rotation(P, score, eligible, n=5, band=None, every=5, capital=ROTAT
         for j in order:
             if slots <= 0 or not valid[j]:
                 break
-            if qty[j] > 0 or not np.isfinite(o[t + 1, j]):
+            if qty[j] > 0 or not np.isfinite(o[t + 1, j]) or (buy_ok is not None and not buy_ok[t + 1, j]):
                 continue
             px = o[t + 1, j]
             q = int(min(target, cash) // px)
@@ -241,6 +246,22 @@ def simulate_rotation(P, score, eligible, n=5, band=None, every=5, capital=ROTAT
             qty[j] = q
             slots -= 1
     return pd.Series(equity, index=P.dates), costs
+
+
+def locked_bars(P):
+    """(buy_ok, sell_ok) from daily bars. A bar that printed one price all day
+    (high == low) is a stock frozen at its circuit band: frozen at or above
+    yesterday's close there were no sellers (no buy fills), at or below it no
+    buyers (no sale fills). A coarse proxy — real locked days can show a tick
+    or two of range — but it removes the most impossible fills, which a
+    momentum book on small names would otherwise collect."""
+    h, l, c = P.a['high'], P.a['low'], P.a['close']
+    prev = np.vstack([np.full((1, c.shape[1]), np.nan), c[:-1]])
+    with np.errstate(invalid='ignore'):
+        single = np.isfinite(h) & np.isfinite(l) & (np.abs(h - l) <= 1e-9 * np.maximum(np.abs(h), 1.0))
+        buy_ok = ~(single & (c >= prev))
+        sell_ok = ~(single & (c <= prev))
+    return buy_ok, sell_ok
 
 
 def benchmark_equal_weight(P):

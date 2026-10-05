@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       study:
-        description: 'backtest | phase5 | phase5_diag | hurdle | attribution | experiments | event_study'
+        description: 'backtest | phase5 | phase5_diag | phase5b | hurdle | attribution | experiments | event_study'
         default: 'backtest'
 
 permissions:
@@ -48,7 +48,7 @@ jobs:
   research:
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60                  # phase5b downloads ~2,000 symbols x 10 years
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,7 +65,7 @@ jobs:
         run: |
           case "$STUDY" in
             backtest) python -m nsebot backtest --out research_results ;;
-            phase5|phase5_diag|hurdle|attribution|experiments|event_study) python -m "nsebot.research.$STUDY" --out research_results ;;
+            phase5|phase5_diag|phase5b|hurdle|attribution|experiments|event_study) python -m "nsebot.research.$STUDY" --out research_results ;;
             *) echo "unknown study: $STUDY" && exit 1 ;;
           esac
       - uses: actions/upload-artifact@v4
