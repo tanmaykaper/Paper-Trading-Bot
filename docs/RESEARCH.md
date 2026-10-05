@@ -123,18 +123,178 @@ Findings:
 3. The best fund is an ex-post maximum out of 25, and the market-filter variants were designed after seeing momentum's late-2024 crash. Both make the comparison *kinder* to the bot than it deserves, and the bot still falls short.
 4. Every design in rounds 2–4 was selected on Aug 2023 to Oct 2026 data. **Daily history from before mid-2023 has never been used to choose anything.** It is the only clean place left to test whether any of these designs can beat smallcap funds.
 
+## Round 5: untouched history, Jul 2018 to Jul 2023 (runs 37295540936, 37296721706)
+
+Pre-registered in commit 569f52d before the run: frozen designs, return boosters and acceptance rules (`nsebot/research/phase5.py`). Rounds 1–4 never used data from before Aug 2023, so nothing below was chosen on this window. It covers the 2018–19 smallcap bear market, the COVID crash, the 2020–21 boom and the 2022 chop.
+
+- **Universe:** 243 of 260 symbols resolved; 207 were trading by Jul 2018.
+- **Book:** ₹50k, Zerodha CNC costs, next-open fills.
+- **Benchmarks:** the 11 active Direct-Growth smallcap funds with full-window NAVs on mfapi.in.
+- **Rules:**
+  - *QUALIFIES* means CAGR above the median fund **and** beating it in at least 3 of the 5 July–June years.
+  - *MEETS TARGET* means CAGR above the best fund.
+
+| | Total | CAGR | Max DD | Years > median fund | Qualifies | Meets target |
+|---|---|---|---|---|---|---|
+| **Best active fund** (Quant Small Cap) | +260.8% | **+28.7%** | −46.7% | | | |
+| Top quartile of 11 funds | — | +23.2% | — | | | |
+| **Median active fund** (SBI Small Cap) | +171.2% | **+21.7%** | −33.8% | | | |
+| Worst active fund | — | +11.9% | — | | | |
+| Nifty 50 | +85.4% | +12.9% | −38.4% | | | |
+| D1 deployed engine (S4b dip reversion) | −16.2% | −3.4% | −16.9% | 0/5 | no | no |
+| D2 12-1 momentum, top 5, Nifty > 200-day SMA | +243.5% | +27.5% | −39.0% | 2/5 | no | no |
+| D3 same, top 10 | +194.7% | +23.7% | −36.2% | 2/5 | no | no |
+| **D4 12-1 momentum, top 10, no filter** | **+404.1%** | **+37.5%** | −37.5% | 4/5 | **yes** | **yes** |
+| E1 dip, 33% × 3 slots | −17.3% | −3.7% | −19.5% | 0/5 | no | no |
+| E2 dip on a 5% trigger | 0.0% | 0.0% | 0.0% | 1/5 | no | no |
+| E3 60% D2 + 40% D1 | +139.6% | +18.8% | −33.4% | 1/5 | no | no |
+| E4 D2 at 1.5×, 15%/yr financing | +329.8% | +33.3% | −56.6% | 2/5 | no | yes (CAGR only) |
+
+Year by year, median fund vs D4: 2018–19 +2.5% vs +13.1%; 2019–20 −4.5% vs +3.9%; 2020–21 +90.3% vs +180.3%; 2021–22 +6.1% vs −3.6%; 2022–23 +36.3% vs +60.5%.
+
+**Post-hoc diagnostics** (`phase5_diag`; these explain the result and change no design or rule):
+
+| Design | Equity at window start | Floor binds below | First below floor | First 25% drawdown | Entries in window | Last entry |
+|---|---|---|---|---|---|---|
+| D1 | ₹44,535 | ₹40,000 | 2020-03-09 | 2020-03-09 | 70 | 2020-03-04 |
+| E1 | ₹47,508 | ₹24,242 | never | 2021-12-20 | 179 | 2021-12-16 |
+| E2 | ₹38,317 | ₹40,000 | 2018-02-05 | never | 0 | 2018-02-02 |
+
+| | CAGR | Max DD | 18–19 | 19–20 | 20–21 | 21–22 | 22–23 |
+|---|---|---|---|---|---|---|---|
+| Equal-weight hold of the list's liquid names (no costs) | +24.0% | −38.0% | +7.3% | −4.9% | +93.0% | +1.6% | +46.9% |
+| D4 minus that | +13.5 pts | | +5.8 | +8.8 | +87.3 | −5.2 | +13.5 |
+| D2 minus that | +3.5 pts | | −18.3 | +2.6 | +100.5 | +2.0 | −15.9 |
+
+Findings:
+
+1. **Dip reversion fails on untouched data.**
+   - D1 lost 4.9% in 2018–19 and 11.8% in 2019–20 over 70 trades. It then tripped the 25% drawdown latch in the COVID crash and never traded again.
+   - E1 also lost money.
+   - The S4b edge from rounds 2–3 (OOS t = 1.8) does not survive a different regime.
+2. **The engine has a silent freeze.**
+   - At 20% notional, the ₹8k "skip, never shrink" floor binds once equity falls below ₹40k, a 20% loss on ₹50k. From then on every signal is skipped, permanently.
+   - E2 froze this way in Feb 2018 without ever reaching the 25% latch. It made no trades and raised no alert.
+   - Live, this looks exactly like V2: it runs every day and opens nothing. The latch message also stamps the wall-clock date instead of the session date, so the raw Phase 5 report shows 2026-10-05.
+3. **D4 is the only design that passes both pre-registered rules, but the evidence is weak.** This is the case the bias warning, written before the run, described.
+   - A cost-free, equal-weight hold of today's list already beats the median fund (+24.0% vs +21.7%), so the list itself is doing much of the work.
+   - D4's margin over that hold (+13.5 points, positive in 4 of 5 years) is the part that may be skill.
+   - Even that margin is probably inflated: momentum concentrates in names that are in today's list *because* they went up.
+4. **D4 failed in the period least affected by survivorship.**
+   - Round 4 (Jun 2024 to Oct 2026, close to the date the list was drawn up) gave the same design +2.4% CAGR with a −45.1% drawdown, against +8.2% for the median fund.
+   - Survivorship bias shrinks near the list date, and that is where D4 lost.
+5. **The 200-day market filter hurt here.** D3, top 10 with the filter, made +23.7%; D4, top 10 without it, made +37.5%. The filter was added after seeing momentum's late-2024 crash, which makes it a fit to round-4 data, and it did not carry over.
+6. **Taxes are not modelled.** Weekly rotation realises gains as short-term capital gains (15% during this window, 20% since Jul 2024), while a fund investor defers tax until redemption. That drag counts against every rotation design.
+
+## Round 6: momentum without hindsight in the symbol list (Phase 5b, run 37298830698)
+
+Pre-registered in commit 11a7a73 (`nsebot/research/phase5b.py`). Round 5's only passing design, D4, picked from today's 260-name list. Here the same design (**B4**) picks from every NSE-listed equity instead.
+
+- **List:** NSE `EQUITY_L.csv`, series EQ, BE and BZ.
+  - 2,614 symbols; all returned data.
+  - 1,755 were ever eligible.
+  - On 2 Jul 2018, 260 names were eligible, against 131 from the 260-name list. The median over the window was 411 per session.
+- **Eligibility:** point-in-time, as in D4 (₹5 cr median traded value, price ≥ ₹50, 252 bars of history). Being in the list no longer depends on having grown big by 2026.
+- **New fill rule:** no buy on a bar frozen at the upper circuit, no sale on a bar frozen at the lower circuit.
+- **Still missing:** stocks delisted before today.
+
+**Primary: untouched window, Jul 2018 – Jul 2023** (11 funds; median SBI Small Cap, best Quant Small Cap)
+
+| | CAGR | Max DD | 18–19 | 19–20 | 20–21 | 21–22 | 22–23 | Years > median |
+|---|---|---|---|---|---|---|---|---|
+| Median active fund | +21.7% | −33.8% | +2.5% | −4.5% | +90.3% | +6.1% | +36.3% | |
+| Best active fund | +28.7% | −46.7% | | | | | | |
+| **B4 momentum, every NSE stock** | **+22.6%** | **−52.8%** | −14.8% | −1.4% | +133.0% | −14.4% | +66.9% | 3/5 |
+| L4 same code, 260-name list (= D4) | +37.5% | −37.5% | +13.1% | +3.9% | +180.3% | −3.6% | +60.5% | 4/5 |
+| Equal-weight hold, every NSE stock (no costs) | +18.5% | −43.6% | −1.3% | −10.6% | +89.3% | −3.0% | +43.9% | 1/5 |
+| Equal-weight hold, 260-name list (no costs) | +24.0% | −38.0% | +7.3% | −4.9% | +93.0% | +1.6% | +46.9% | 3/5 |
+| Nifty 50 | +12.9% | −38.4% | | | | | | |
+
+**Secondary: Jul 2018 – Oct 2026** (median Kotak Small Cap +18.5%, best Quant Small Cap +24.5%)
+
+| | CAGR | Max DD | 22–23 | 23–24 | 24–25 | 25–26 | Years > median (of 9) |
+|---|---|---|---|---|---|---|---|
+| Median active fund | +18.5% | −38.5% | +27.0% | +45.2% | +0.9% | +0.7% | |
+| **B4** | **+30.2%** | −52.8% | +34.0% | +95.9% | +35.0% | +11.0% | 7/9 |
+| L4 (260-name list) | +32.9% | −43.9% | +40.7% | +127.1% | −14.2% | +16.8% | 7/9 |
+| Equal-weight hold, every NSE stock | +19.4% | −43.6% | +33.9% | +60.3% | +15.8% | +2.9% | 5/9 |
+
+**Round-4 window, Jun 2024 – Oct 2026** (median fund +8.2%, best +17.7%):
+
+| | CAGR | Max DD |
+|---|---|---|
+| B4 | +33.9% | −31.4% |
+| L4 | +2.3% | −43.9% |
+| Equal-weight hold, every NSE stock | +10.7% | |
+| Nifty 50 | −1.3% | |
+
+**Verdict (pre-registered): PASS.**
+- Primary window: B4 made +22.6% against the median fund's +21.7% and beat it in 3 of 5 years, so it qualifies. Its full-span CAGR (+30.2%) is also above the median fund's (+18.5%).
+- MEETS TARGET (above the best fund): **no** on the untouched window (+22.6% vs +28.7%), **yes** over the full span (+30.2% vs +24.5%).
+
+Findings:
+
+1. **The hindsight in the old list was worth about 15 points a year.** On the untouched window, the same momentum code made +37.5% on today's 260 names and +22.6% on every NSE stock. Equal-weight holds show the same effect: +24.0% vs +18.5%. Round 5's D4 result was mostly the list.
+2. **What survives is real but thin on the clean window.**
+   - B4 beat the median fund by 0.9 points a year there, which is within what the remaining delisting bias could plausibly account for.
+   - Its margin over an equal-weight hold of the same stocks was +4.1 points a year.
+   - It did not come close to the best fund.
+3. **The strength is in the full span and the recent years.**
+   - From 2023 to 2026, B4 beat the median fund every year, including the 2024–26 smallcap slump (+33.9% CAGR vs +8.2%).
+   - That is the period with the fewest delistings, so the residual bias is smallest there.
+   - It is not clean evidence, though. The momentum *family* was researched on 2023–26 data, even if B4 on this universe was never looked at.
+4. **Drawdowns are much deeper than any fund's.**
+   - B4's worst fall was −52.8%, against −33.8% for the median fund and −46.7% for the best.
+   - It lost 14–15% in 2018–19 and 2021–22, years the median fund made money.
+   - The deployed 25% drawdown latch would have stopped B4 in its first bad year. A momentum sleeve needs a drawdown policy chosen for it.
+5. **Not modelled:**
+   - **Tax:** short-term capital gains on weekly rotation.
+   - **Spread at the open:** ignored because orders are assumed to fill in NSE's pre-open call auction at the opening price.
+   - **Partially locked circuit days:** only bars locked all day are blocked.
+
+## Round 7: the live momentum engine replayed on real history (run 37304737290)
+
+`nsebot/research/momentum_replay.py` runs the deployed `MomentumEngine`, session by session, over the round-6 universe (every NSE-listed stock, 1,755 ever eligible) from 11 Jul 2017. It uses the live paper broker: 5 bps slippage, tick snapping, sizing on the close, and no look-ahead on circuit locks. The result is compared with the research simulator's B4 curve.
+
+| | Research B4 | Live engine |
+|---|---|---|
+| CAGR, untouched Jul 2018 – Jul 2023 | +22.6% | **+28.9%** |
+| CAGR, Jul 2018 – Oct 2026 | +30.2% | **+34.9%** |
+| Max drawdown | −52.8% | −50.5% |
+
+| | 18–19 | 19–20 | 20–21 | 21–22 | 22–23 | 23–24 | 24–25 | 25–26 |
+|---|---|---|---|---|---|---|---|---|
+| Research B4 | −14.8% | −1.4% | +133.0% | −14.4% | +34.0% | +95.9% | +35.0% | +11.0% |
+| Live engine | −7.2% | +6.5% | +152.4% | −2.7% | +23.3% | +101.2% | +24.5% | +15.5% |
+
+The live engine ran cleanly through 8 years of real data:
+- 455 rebalances and 288 completed round trips, with ₹19,615 in costs.
+- 5 orders not filled (circuit locks, no trade that day, cash) and 15 sales deferred.
+- 3 rebalances skipped as data faults.
+
+**The live engine did better than the research curve, which frictions alone cannot explain.** The synthetic tests show the two code paths are identical once slippage, tick snapping and close-day sizing are removed, so the gap comes from how real data differs:
+- **Calendar:** the simulator counts "every 5 sessions" on the union of all stocks' trading days, while the engine counts on the Nifty index's sessions. Any date where the two calendars disagree shifts which day the rebalances land on.
+- **Live-data rules:** a holding with no bar that day is kept, data-fault rebalances are skipped, and locked buys leave the slot empty.
+
+A 10-stock momentum book is path-dependent. Until the phase sensitivity is measured, read the gap as a sign that **B4's point estimates carry several points of noise from rebalance timing alone**, not as an edge the live code adds.
+
 ## What the evidence supports
 
-1. **Swing: trade S4b dip reversion.** The story is consistent across the board:
-   - breakouts lose because short-horizon moves tend to reverse;
-   - buying the reversal wins, and wins more the deeper the dip (S4a +0.15% → S4b +0.69% OOS);
-   - it held up out-of-sample during a falling market (Nifty −9.4% annualised over the OOS window).
+1. **Swing: S4b dip reversion is not proven, and round 5 points negative.**
+   - Rounds 2–3 found it the only variant to pass out-of-sample. Its edge grew with dip depth (S4a +0.15% → S4b +0.69% OOS) and it held up while Nifty fell.
+   - On untouched 2018–2020 data it lost money (D1 −4.9%, then −11.8%) and froze.
 2. **Honest uncertainty on S4b:**
-   - OOS t = 1.8, so the 95% interval for net per trade is about **−0.06% to +1.44%**. Probably positive, but not proven.
-   - The edge shrank from IS to OOS (+1.53% → +0.69%), which is normal and should be expected to continue.
-   - Frequency is about 0.5 signals per session across 255 names.
+   - The OOS 95% interval was already about **−0.06% to +1.44%** per trade (t = 1.8), and round 5 sits at the bad end of it.
+   - Keep it running only as a paper experiment, and only once the floor freeze (round 5, finding 2) is fixed.
 3. **Intraday: run at the sizing floor** as live data collection. The bot's own trades move the Kelly estimate; aggressive sizing has to be earned first.
 4. **Kelly priors use the OOS numbers** (the weaker half), never the IS numbers.
 5. **Swing sizes by notional with an economic floor, not by Kelly** (round 3). Kelly on the bot's own results is reported every run and raises a warning when negative on 60+ trades. It never becomes an automatic state the book can't trade its way out of.
-6. **Honest expectation for swing:** small, regime-dependent, and probably positive. Forward paper trading is the real test.
-7. **Against the owner's smallcap-fund target (round 4), the bot does not qualify.** Over the same window the best smallcap fund returned +17.7% CAGR and the median fund +8.2%; the bot returned about −2% to +3% CAGR. Closing that gap needs a stronger edge, not more tuning on the same 2.3 years.
+6. **Honest expectation for swing:** dip reversion is roughly flat to negative across regimes. Forward paper trading is the remaining test.
+7. **Against the owner's smallcap-fund target:**
+   - Round 4: nothing qualified.
+   - Round 5: D4 passed, but on a list built with hindsight.
+   - Round 6: the same momentum design on **every NSE stock** (B4) passes the pre-registered rule.
+     - Untouched 2018–23: +22.6% vs +21.7% for the median fund; no on the best fund (+28.7%).
+     - Full 2018–26: +30.2% vs +24.5% for the best fund.
+   - Expect returns from roughly fund-like to better, with drawdowns past 50%. Beating the best fund is plausible, not established.
+   - Forward paper trading of a momentum sleeve is the next test. It needs its own drawdown policy, since the 25% latch would stop it in an ordinary bad year.

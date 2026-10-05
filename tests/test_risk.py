@@ -229,6 +229,51 @@ def test_drawdown_latch_requires_a_human(tmp_path):
     assert b.check(equity=99_000).entries_allowed
 
 
+def test_a_live_latch_survives_a_fresh_checkout_and_a_human_reset_restarts_the_drawdown(tmp_path):
+    """On GitHub Actions every run is a fresh checkout: a latch written to the
+    repo root (gitignored) vanished, so trading resumed by itself once equity
+    recovered. Live runs now keep it with the sleeve's committed state."""
+    state_dir = tmp_path / 'state' / 'swing'
+    b = CircuitBreakers(swing_breakers(), 'swing', workdir=str(tmp_path), latch_dir=str(state_dir))
+    b.start_session('2026-01-05')
+    b.check(100_000)
+    b.start_session('2026-01-06')
+    assert not b.check(70_000).entries_allowed
+    latch = state_dir / 'BREAKER_TRIPPED_swing'
+    assert latch.exists() and not (tmp_path / 'BREAKER_TRIPPED_swing').exists()
+    # Next run: state.json and the committed latch come back. Recovery alone does not release it.
+    b2 = CircuitBreakers(swing_breakers(), 'swing', state=b.state(), workdir=str(tmp_path),
+                         latch_dir=str(state_dir))
+    b2.start_session('2026-01-07')
+    assert not b2.check(80_000).entries_allowed
+    # A human deletes the latch: trading resumes and drawdown restarts from that day's equity,
+    # so it does not trip again at once.
+    latch.unlink()
+    b2.start_session('2026-01-08')
+    assert b2.check(72_000).entries_allowed and b2.state()['peak_equity'] == 72_000
+    assert not latch.exists() and not b2.state()['latched']
+
+
+def test_engines_pass_the_latch_directory_through(tmp_path):
+    from nsebot.broker.paper import PaperBroker
+    from nsebot.config import BotConfig
+    from nsebot.engine import IntradayEngine, MomentumEngine, SwingEngine
+    from nsebot.ledger import Ledger
+    for cls, mode in ((SwingEngine, 'swing'), (IntradayEngine, 'intraday'), (MomentumEngine, 'momentum')):
+        L = Ledger(str(tmp_path), mode, 50_000)
+        eng = cls(BotConfig(), PaperBroker(), L, workdir=str(tmp_path), log=lambda m: None, latch_dir=L.dir)
+        assert eng.breakers.latch_dir == L.dir and eng.breakers.workdir == str(tmp_path)
+
+
+def test_drawdown_latch_is_stamped_with_the_session_date(tmp_path):
+    b = CircuitBreakers(swing_breakers(), 'swing', workdir=str(tmp_path))
+    b.start_session('2020-03-06')
+    b.check(52_000)
+    b.start_session('2020-03-09')
+    b.check(38_000)
+    assert 'on 2020-03-09' in (tmp_path / 'BREAKER_TRIPPED_swing').read_text()
+
+
 def test_kill_switch_and_trade_cap(tmp_path):
     b = CircuitBreakers(intraday_breakers(), 'intraday', workdir=str(tmp_path))
     b.start_session('2026-10-05')
@@ -293,6 +338,39 @@ def test_below_the_floor_is_skipped_not_shrunk():
     d = size_position(swing_sizing(), equity=50_000, cash=6_000, entry=500, stop=470,
                       edge=_edge(None))
     assert not d.ok and d.binding == 'below minimum notional'
+
+
+def test_floor_lift_keeps_a_shrunken_book_trading():
+    """Round 5: below ₹40k equity 20% is under the ₹8k floor, and every signal
+    was skipped for good. The position is now lifted to the floor instead."""
+    d = size_position(swing_sizing(), equity=38_000, cash=38_000, entry=500, stop=455,
+                      edge=_edge(None))
+    assert d.ok and d.qty == 16 and d.notional == 8_000 and d.binding == 'minimum notional (lifted)'
+    assert d.risk_rupees <= 0.03 * 38_000
+    off = size_position(dataclasses.replace(swing_sizing(), lift_to_floor=False), equity=38_000,
+                        cash=38_000, entry=500, stop=455, edge=_edge(None))
+    assert not off.ok and off.binding == 'below minimum notional'      # the old freeze
+
+
+def test_floor_lift_never_breaks_another_cap():
+    # risk cap: 16 shares x ₹200 stop distance = ₹3,200 > 3% of ₹38k
+    assert not size_position(swing_sizing(), equity=38_000, cash=38_000, entry=500, stop=300,
+                             edge=_edge(None)).ok
+    # buying power: ₹6k of cash cannot buy ₹8k
+    assert not size_position(swing_sizing(), equity=38_000, cash=6_000, entry=500, stop=455,
+                             edge=_edge(None)).ok
+    # concentration: ₹8k is more than 40% of ₹19k
+    assert not size_position(swing_sizing(), equity=19_000, cash=19_000, entry=500, stop=490,
+                             edge=_edge(None)).ok
+
+
+def test_floor_lift_leaves_normal_equity_sizing_alone():
+    # ₹41k: the ₹8,200 target clears the floor; 2 shares of ₹3,000 round below it -> skipped, as before
+    d = size_position(swing_sizing(), equity=41_000, cash=41_000, entry=3_000, stop=2_800,
+                      edge=_edge(None))
+    assert not d.ok and d.binding == 'below minimum notional'
+    d = size_position(swing_sizing(), equity=50_000, cash=50_000, entry=500, stop=470, edge=_edge(None))
+    assert d.binding == 'target notional' and d.notional == 10_000
 
 
 def test_notional_mode_ignores_a_negative_kelly_for_size():

@@ -42,14 +42,15 @@ logger = logging.getLogger(__name__)
 class IntradayEngine:
     mode = 'intraday'
 
-    def __init__(self, cfg, broker, ledger, workdir='.', log=None, universe=None):
+    def __init__(self, cfg, broker, ledger, workdir='.', log=None, universe=None, latch_dir=None):
         self.cfg = cfg
         self.sig = IntradaySignalEngine(cfg.intraday)
         self.sizing, self.exits = cfg.intraday_sizing, cfg.intraday_exits
         self.broker, self.L = broker, ledger
         self.universe = list(universe or INTRADAY_UNIVERSE)
         self.breakers = CircuitBreakers(cfg.intraday_breakers, self.mode,
-                                        state=ledger.state.get('breakers'), workdir=workdir)
+                                        state=ledger.state.get('breakers'), workdir=workdir,
+                                        latch_dir=latch_dir)
         self.log = log or logger.info
         self.book = Book(ledger, broker, self.breakers, self.mode, self.sizing.leverage, self.log)
         self.ticks = getattr(broker, 'ticks', None) or TickTable()

@@ -2,6 +2,7 @@
 
     python -m nsebot swing      [--broker paper|kite] [--state state]   end-of-day CNC cycle
     python -m nsebot intraday   [--broker paper|kite] [--state state]   MIS session loop to 15:10
+    python -m nsebot momentum   [--state state]                         CNC momentum sleeve (paper)
     python -m nsebot backtest   [--out research_results]                full-engine portfolio backtest
     python -m nsebot status     [--state state]                         sleeves at a glance
 
@@ -10,6 +11,11 @@ Paper is the default broker. Kite needs KITE_API_KEY plus a daily token from
 (SEBI retail-algo rules) — see nsebot/broker/kite.py.
 
 Exit codes: 0 ok · 2 Kite token missing/expired · 3 market data unusable.
+
+Drawdown latches are written to state/<mode>/BREAKER_TRIPPED_<mode>, which the
+workflows commit, so a latch survives GitHub Actions' fresh checkouts. Delete
+that file (in the repo) to resume; the kill switch STOP_TRADING stays at the
+repo root.
 """
 
 import argparse
@@ -20,7 +26,7 @@ import sys
 from .broker.paper import PaperBroker
 from .config import BotConfig
 from .ledger import Ledger
-from .notify import intraday_report, job_summary, send_email, swing_report
+from .notify import intraday_report, job_summary, momentum_report, send_email, swing_report
 
 logger = logging.getLogger('nsebot')
 
@@ -67,11 +73,12 @@ def cmd_swing(args):
     if asof is None:
         logger.error('no completed session in the index data')
         return 3
-    rep = SwingEngine(cfg, broker, ledger, workdir='.', log=logger.info).run(market, asof)
+    rep = SwingEngine(cfg, broker, ledger, workdir='.', log=logger.info,
+                      latch_dir=ledger.dir).run(market, asof)
     md = swing_report(rep, ledger.state['initial_cash'])
     print(md)
     job_summary(md)
-    if rep.get('filled') or rep.get('closed') or rep.get('placed') or rep.get('breakers'):
+    if rep.get('filled') or rep.get('closed') or rep.get('placed') or rep.get('breakers') or rep.get('warnings'):
         send_email(f"nsebot swing {rep['asof']} — equity ₹{rep.get('equity', 0):,.0f}", md)
     return 0
 
@@ -82,12 +89,69 @@ def cmd_intraday(args):
 
     cfg = BotConfig()
     ledger = Ledger(args.state, 'intraday', _capital('intraday'))
-    engine = IntradayEngine(cfg, _broker(args.broker), ledger, workdir='.', log=logger.info)
+    engine = IntradayEngine(cfg, _broker(args.broker), ledger, workdir='.', log=logger.info,
+                            latch_dir=ledger.dir)
     reports = engine.run_session(YahooProvider(chunk_size=40, pause_s=0.5))
     md = intraday_report(reports, ledger)
     print(md)
     job_summary(md)
     send_email(f"nsebot intraday {ledger.state.get('session')}", md)
+    return 0
+
+
+def cmd_momentum(args):
+    import pandas as pd
+
+    from .data import YahooProvider
+    from .engine.market_view import completed_session
+    from .engine.momentum import MomentumEngine, MomentumMarket
+    from .listing import ListUnavailable, nse_equities
+    from .universe import INDEX_SYMBOL
+
+    cfg = BotConfig()
+    m = cfg.momentum
+    ledger = Ledger(args.state, 'momentum', _capital('momentum'))
+    engine = MomentumEngine(cfg, PaperBroker(), ledger, workdir='.', log=logger.info, latch_dir=ledger.dir)
+    prov = YahooProvider()
+    index = prov.daily([INDEX_SYMBOL], lookback_days=420).get(INDEX_SYMBOL)
+    asof = completed_session(index) if index is not None else None
+    if asof is None:
+        msg = 'market data unusable: no completed index session — state left untouched'
+        logger.error(msg)
+        send_email('nsebot momentum — DATA FAILURE', msg)
+        return 3
+    last = ledger.state.get('last_processed')
+    processed = bool(last) and pd.Timestamp(last) >= asof
+    due = not processed and engine.rebalance_due(MomentumMarket({}, index, m), asof)
+    needed, note = engine.symbols_needed(), ''
+    if due:
+        try:
+            listed, note = nse_equities(os.path.join(args.state, 'momentum', 'nse_equity_list.json'),
+                                        m.series, m.list_max_age_days)
+        except ListUnavailable as e:
+            logger.error(f'no NSE equity list: {e}')
+            send_email('nsebot momentum — NO EQUITY LIST', f'{e}\n\nRebalance skipped; state left untouched.')
+            return 3
+        universe = prov.daily(list(dict.fromkeys(listed + needed)), lookback_days=420)
+        resolved = sum(1 for s in listed if s in universe) / max(len(listed), 1)
+        if resolved < m.min_resolved:
+            msg = (f'market data unusable: {resolved:.0%} of {len(listed)} listed symbols returned data '
+                   f'(need {m.min_resolved:.0%}) — state left untouched')
+            logger.error(msg)
+            send_email('nsebot momentum — DATA FAILURE', msg)
+            return 3
+    else:
+        universe = prov.daily(needed, lookback_days=30) if needed and not processed else {}
+    missing = sorted(set(needed) - set(universe))
+    if missing and not processed:
+        logger.warning(f'no data for held/pending {missing} — they are valued at cost and filled next run')
+    rep = engine.run(MomentumMarket(universe, index, m), asof)
+    rep['universe_note'] = note
+    md = momentum_report(rep, ledger.state['initial_cash'], ledger.closed_trades())
+    print(md)
+    job_summary(md)
+    if any(rep.get(k) for k in ('filled', 'closed', 'placed', 'selling', 'breakers', 'warnings')):
+        send_email(f"nsebot momentum {rep['asof']} — equity ₹{rep.get('equity', 0):,.0f}", md)
     return 0
 
 
@@ -100,7 +164,7 @@ def cmd_backtest(args):
 
 
 def cmd_status(args):
-    for mode in ('swing', 'intraday'):
+    for mode in ('swing', 'intraday', 'momentum'):
         L = Ledger(args.state, mode, _capital(mode))
         t = L.closed_trades()
         net = float(t['net_pnl'].sum()) if len(t) else 0.0
@@ -117,6 +181,8 @@ def main(argv=None):
         p = sub.add_parser(name)
         p.add_argument('--broker', choices=['paper', 'kite'], default=os.environ.get('NSEBOT_BROKER', 'paper'))
         p.add_argument('--state', default='state')
+    p = sub.add_parser('momentum')            # paper only: see nsebot/engine/momentum.py
+    p.add_argument('--state', default='state')
     p = sub.add_parser('backtest')
     p.add_argument('--out', default='research_results')
     p = sub.add_parser('status')
@@ -125,8 +191,8 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
                         stream=sys.stdout)
     try:
-        return {'swing': cmd_swing, 'intraday': cmd_intraday, 'backtest': cmd_backtest,
-                'status': cmd_status}[args.cmd](args)
+        return {'swing': cmd_swing, 'intraday': cmd_intraday, 'momentum': cmd_momentum,
+                'backtest': cmd_backtest, 'status': cmd_status}[args.cmd](args)
     except Exception as e:
         if type(e).__name__ == 'TokenExpired':
             logger.error(f'Kite token problem: {e}')

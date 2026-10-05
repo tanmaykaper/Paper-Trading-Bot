@@ -10,10 +10,15 @@ to this account — a far better reason to stop:
                       limit, whichever is first (0 disables the breaker —
                       swing runs without it, see config.swing_breakers).
   DAILY LOSS LIMIT    today's realised + open P&L below -X% of sleeve equity
-                      -> flatten (intraday) and halt until tomorrow.
+                      -> flatten (intraday) and halt until tomorrow (0 disables
+                      it — the momentum sleeve runs without one).
   MAX DRAWDOWN        sleeve equity X% below its peak -> halt ALL new
                       entries until a human deletes the latch file. This is
-                      the one that is meant to be annoying.
+                      the one that is meant to be annoying. Live runs keep
+                      the file with the sleeve's state (committed by the
+                      workflow) so it survives a fresh checkout; deleting it
+                      resumes trading and restarts the drawdown from that
+                      day's equity, so it doesn't instantly re-trip.
   TRADES PER DAY      intraday overtrading cap.
   KILL SWITCH         a file named STOP_TRADING in the working directory.
 
@@ -41,13 +46,14 @@ class BreakerVerdict:
 
 class CircuitBreakers:
 
-    def __init__(self, cfg, mode, state=None, workdir='.'):
+    def __init__(self, cfg, mode, state=None, workdir='.', latch_dir=None):
         self.cfg = cfg
         self.mode = mode
-        self.workdir = workdir
+        self.workdir = workdir                       # the kill switch lives here
+        self.latch_dir = latch_dir or workdir        # ...the drawdown latch here
         self.s = {'consecutive_losses': 0, 'cooldown_left': 0, 'reduced': False, 'reduced_left': 0,
                   'session': None, 'trades_today': 0, 'realised_today': 0.0,
-                  'peak_equity': None, 'halted_for_session': False}
+                  'peak_equity': None, 'halted_for_session': False, 'latched': False}
         if state:
             self.s.update(state)
 
@@ -102,18 +108,24 @@ class CircuitBreakers:
         if os.path.exists(os.path.join(self.workdir, self.cfg.kill_switch_file)):
             reasons.append(f'kill switch file {self.cfg.kill_switch_file} present')
 
-        latch = os.path.join(self.workdir, f'{DRAWDOWN_LATCH}_{self.mode}')
+        latch = os.path.join(self.latch_dir, f'{DRAWDOWN_LATCH}_{self.mode}')
+        if self.s.get('latched') and not os.path.exists(latch):
+            # A human deleted the latch: resume, measuring drawdown from here.
+            self.s['latched'] = False
+            self.s['peak_equity'] = float(equity)
         peak = self.s['peak_equity'] or equity
         dd = (peak - equity) / peak if peak > 0 else 0.0
         if dd >= self.cfg.max_drawdown_pct and not os.path.exists(latch):
+            self.s['latched'] = True
+            os.makedirs(self.latch_dir, exist_ok=True)
             with open(latch, 'w') as fh:
-                fh.write(f'{self.mode} drawdown {dd:.1%} from peak {peak:,.0f} on {date.today()}\n'
+                fh.write(f'{self.mode} drawdown {dd:.1%} from peak {peak:,.0f} on {self.s["session"] or date.today()}\n'
                          f'Delete this file to resume new entries.\n')
         if os.path.exists(latch):
             reasons.append(f'max drawdown breaker latched ({latch}) — delete it to resume')
 
         day_pnl = self.s['realised_today'] + float(open_pnl)
-        if equity > 0 and day_pnl <= -self.cfg.daily_loss_limit_pct * equity:
+        if self.cfg.daily_loss_limit_pct and equity > 0 and day_pnl <= -self.cfg.daily_loss_limit_pct * equity:
             reasons.append(f'daily loss limit: {day_pnl:,.0f} <= -{self.cfg.daily_loss_limit_pct:.0%} of equity')
             self.s['halted_for_session'] = True
             flatten = self.mode == 'intraday'
