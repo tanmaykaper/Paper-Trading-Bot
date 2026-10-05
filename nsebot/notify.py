@@ -68,6 +68,10 @@ def swing_report(rep, initial_cash):
     lines += ['', '### Closed'] + _rows(rep.get('closed'), ['symbol', 'reason', 'net ₹', 'net R'])
     lines += ['', '### New plans (fill at next open)'] + _rows(rep.get('placed'),
                                                                ['symbol', 'qty', 'ref', 'stop', 'binding'])
+    if rep.get('declined'):
+        # Every signal that did not become a plan, and why: "signals today 2" with
+        # no plans must never be a mystery (V2 looked exactly like that).
+        lines += ['', '### Signals not taken'] + _rows(rep['declined'], ['symbol', 'reason'])
     lines += ['', '### Open'] + _rows(rep.get('open_positions'), ['symbol', 'qty', 'entry', 'stop'])
     if rep.get('cancelled'):
         lines += ['', '### Cancelled'] + _rows(rep['cancelled'], ['symbol', 'reason'])

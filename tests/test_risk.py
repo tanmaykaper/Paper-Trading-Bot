@@ -311,6 +311,26 @@ def test_allocator_respects_slots_sectors_held_and_budget():
     assert 'budget' in reasons['F']
 
 
+def test_a_declined_signal_says_exactly_why():
+    """₹50k book, a dip with a 21% stop: the 3% risk cap allows ₹1,500 of risk,
+    i.e. 14 shares = ₹7,000, under the ₹8k floor — skipped, and the reason says so."""
+    cfg = swing_sizing()
+    plan = allocate([_sig('WIDE', 500.0, 395.0)], [], cfg, equity=50_000, cash=50_000, edge=_edge(cfg))
+    assert not plan.orders
+    assert plan.declined == [('WIDE', 'sized to zero (binding: below minimum notional — '
+                                      '₹7,000 < ₹8,000 floor (binding: risk cap))')]
+
+
+def test_swing_report_lists_signals_not_taken():
+    from nsebot.notify import swing_report
+    rep = {'asof': '2026-10-05', 'equity': 50_000.0, 'cash': 50_000.0, 'signals': 2, 'status': 'ok',
+           'declined': [('WIDE', 'sized to zero (binding: below minimum notional — ₹7,000 < ₹8,000 floor '
+                                 '(binding: risk cap))'), ('BANKX', 'sector BANK at its cap of 2')]}
+    md = swing_report(rep, 50_000)
+    assert '### Signals not taken' in md and '| WIDE | sized to zero' in md and '| BANKX | sector BANK' in md
+    assert '### Signals not taken' not in swing_report(dict(rep, declined=[]), 50_000)
+
+
 def test_open_risk_is_zero_once_stop_locks_profit():
     p = Position('X', 'swing', 'LONG', 10, 100, 95, 102, pd.Timestamp('2026-10-01'), 2.0)
     assert open_risk(p) == 0.0

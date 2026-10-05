@@ -506,3 +506,18 @@ def test_momentum_replay_study_runs_on_fake_sources(tmp_path):
 
     report = momentum_replay.run(str(tmp_path), fetch=fetch, get_list=lambda: (sorted(u), 'fake list'))
     assert '| research B4 | live engine |' in report and 'rebalances' in report
+
+
+def test_phase_runs_delay_the_first_rebalance_and_the_study_renders(tmp_path):
+    from nsebot.research import momentum_phase
+    u, idx = research_world(n_sym=40, T=330, switch=300)
+    P = Panel(u)
+    curves = momentum_phase.phase_runs(P)
+    first_trade = [int(np.argmax(c.to_numpy() != 50_000.0)) for c in curves]
+    assert first_trade == sorted(first_trade) and len(set(first_trade)) == momentum_phase.PHASES
+
+    def fetch(symbols, start, end):
+        return {'^NSEI': idx} if symbols == ['^NSEI'] else {s: u[s] for s in symbols if s in u}
+
+    report = momentum_phase.run(str(tmp_path), fetch=fetch, get_list=lambda: (sorted(u), 'fake list'))
+    assert 'Nifty sessions (live)' in report and '0 stock-trading dates are not Nifty sessions' in report
