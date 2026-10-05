@@ -129,9 +129,10 @@ def bot_variants(universe, index_df, window_start):
         curves[name] = eq
 
     latches = {}
-    for label, uni, idx in (('C1 deployed engine, started on the full history', universe, index_df),
-                            ('C1 deployed engine, started 520 days back (as in its own backtest)',
-                             {s: d.iloc[-520:] for s, d in universe.items()}, index_df.iloc[-520:])):
+    # One run only. A second run on a shorter history would start AFTER the
+    # window opens and silently measure a shorter period — compare against the
+    # Phase 4b backtest (same window, its own start) instead.
+    for label, uni, idx in (('C1 deployed engine, started on the full history', universe, index_df),):
         _, eq, _, led = run_backtest(uni, idx)
         curves[label] = eq
         latch = os.path.join(os.path.dirname(led.dir), 'BREAKER_TRIPPED_swing')

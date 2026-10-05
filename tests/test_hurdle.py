@@ -40,5 +40,5 @@ def test_bot_variants_run_on_synthetic_data():
     curves, P, latches = bot_variants(u, idx, pd.Timestamp(u['S0']['datetime'].iloc[260]))
     assert {'M1 12-1 momentum, top 10, Nifty > 200-day SMA filter',
             'C1 deployed engine, started on the full history'} <= set(curves)
-    assert len(latches) == 2
+    assert len(latches) == 1
     assert np.isfinite(curves['M4 12-1 momentum, top 10, no filter (reference)'].iloc[-1])

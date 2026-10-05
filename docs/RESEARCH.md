@@ -93,6 +93,36 @@ What this shows:
 
 Phase 4b deploys C1. `tests/test_attribution.py` proves the deployed engine places exactly C1's trades. C1 was selected after seeing this data, so its +6.7% is in-sample by construction. The deeper drawdown than Nifty (−18.7% vs −14.5%) and the IS loss (−7.3%) are part of the result, not footnotes.
 
+## Round 4: the smallcap-fund hurdle (run 37293283239)
+
+The owner's target is to beat the best-performing smallcap funds. This round measures that bar on the full-engine backtest's exact window, **11 Jun 2024 to 5 Oct 2026**.
+
+- **Funds:** every Direct-Growth smallcap fund with full history in the window, from mfapi.in's free NAV data. That is 25 active funds plus passive index funds.
+- **Bot designs:** same universe, ₹50k book, Zerodha CNC costs, next-open fills.
+
+| | Total | CAGR | Max DD |
+|---|---|---|---|
+| **Best active smallcap fund** (Motilal Oswal Small Cap, Direct) | **+45.6%** | **+17.7%** | −23.7% |
+| Top quartile of 25 active funds | — | +11.8% | — |
+| Median active fund (Quantum Small Cap) | +19.9% | +8.2% | −18.2% |
+| Worst active fund | — | +0.7% | — |
+| Nifty Smallcap 50 index funds | +15.7% | +6.5% | −25.0% |
+| Nifty Smallcap 250 index funds | +7.0–7.7% | +3.0–3.3% | −26.2% |
+| Bot: deployed C1, Phase 4b backtest (same window) | +6.9% | +3.0% | −18.7% |
+| Bot: deployed C1 started on a longer history, measured on the same window | −4.2% | −1.8% | −24.0% |
+| Bot: M2 12-1 momentum, top 5, Nifty > 200-day SMA | +15.7% | +6.5% | −26.0% |
+| Bot: M1 same, top 10 | +10.6% | +4.4% | −29.3% |
+| Bot: M3 6-month momentum, top 10, same filter | +1.5% | +0.6% | −28.6% |
+| Bot: M4 12-1 momentum, top 10, no filter | +5.6% | +2.4% | −45.1% |
+| Bot: B1 70% M1 + 30% C1 | +6.1% | +2.6% | −25.3% |
+
+Findings:
+
+1. **No bot design beats even the median active smallcap fund on this window.** The best fund beats every design by more than 11 points of CAGR. The best design (M2) only matches the passive Smallcap 50 index.
+2. **The deployed engine's window return depends on its start date.** It reads +6.9% or −4.2% depending only on how much history the backtest started from, which changes position sizes and which slots are occupied when the window opens. Over this window it cannot be told apart from roughly flat.
+3. The best fund is an ex-post maximum out of 25, and the market-filter variants were designed after seeing momentum's late-2024 crash. Both make the comparison *kinder* to the bot than it deserves, and the bot still falls short.
+4. Every design in rounds 2–4 was selected on Aug 2023 to Oct 2026 data. **Daily history from before mid-2023 has never been used to choose anything.** It is the only clean place left to test whether any of these designs can beat smallcap funds.
+
 ## What the evidence supports
 
 1. **Swing: trade S4b dip reversion.** The story is consistent across the board:
@@ -107,3 +137,4 @@ Phase 4b deploys C1. `tests/test_attribution.py` proves the deployed engine plac
 4. **Kelly priors use the OOS numbers** (the weaker half), never the IS numbers.
 5. **Swing sizes by notional with an economic floor, not by Kelly** (round 3). Kelly on the bot's own results is reported every run and raises a warning when negative on 60+ trades. It never becomes an automatic state the book can't trade its way out of.
 6. **Honest expectation for swing:** small, regime-dependent, and probably positive. Forward paper trading is the real test.
+7. **Against the owner's smallcap-fund target (round 4), the bot does not qualify.** Over the same window the best smallcap fund returned +17.7% CAGR and the median fund +8.2%; the bot returned about −2% to +3% CAGR. Closing that gap needs a stronger edge, not more tuning on the same 2.3 years.
