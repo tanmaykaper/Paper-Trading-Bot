@@ -61,6 +61,45 @@ def _fixed_notional_allocate(signals, open_positions, cfg, **kw):
     return plan
 
 
+def make_notional_allocate(target_pct=0.20, min_notional=8_000.0):
+    """Candidate fix: size by NOTIONAL (a fixed share of equity per slot, like
+    the event study's ₹15k), cap the risk at cfg.risk_cap_pct, and SKIP a trade
+    that cannot reach min_notional rather than shrinking it into fixed-cost
+    territory. Capacity limits (slots, sector, daily budget, cash) still apply."""
+    def _allocate(signals, open_positions, cfg, *, equity, cash, edge=None, regime_mult=1.0,
+                  breaker_mult=1.0, max_new=None, sector_of=lambda s: 'OTHER', **kw):
+        plan = AllocationPlan()
+        held = {p.symbol for p in open_positions}
+        sectors = {}
+        for p in open_positions:
+            sectors[sector_of(p.symbol)] = sectors.get(sector_of(p.symbol), 0) + 1
+        slots = max(cfg.max_positions - len(open_positions), 0)
+        budget = slots if max_new is None else min(slots, int(max_new))
+        cash_left = float(cash)
+        for s in signals:
+            if s.symbol in held or budget <= 0:
+                continue
+            sec = sector_of(s.symbol)
+            if sectors.get(sec, 0) >= cfg.max_per_sector:
+                continue
+            notional = min(equity * target_pct * regime_mult * breaker_mult, cash_left)
+            qty = int(notional // s.ref_price)
+            max_risk_qty = int(equity * cfg.risk_cap_pct // max(s.risk_per_share, 1e-9))
+            qty = min(qty, max_risk_qty)
+            if qty < 1 or qty * s.ref_price < min_notional:
+                plan.declined.append((s.symbol, 'below minimum economic notional'))
+                continue
+            size = SizeDecision(qty, qty * s.risk_per_share, qty * s.ref_price,
+                                qty * s.risk_per_share / equity, 'notional')
+            plan.orders.append(Order(s.symbol, s.side, qty, s.ref_price, s.stop, size, s, 'CNC'))
+            held.add(s.symbol)
+            sectors[sec] = sectors.get(sec, 0) + 1
+            cash_left -= qty * s.ref_price
+            budget -= 1
+        return plan
+    return _allocate
+
+
 class _Regime:
     """Wraps a DailyMarket. mode: 'real' (deployed), 'budget' (keep the regime's
     daily entry budget, drop its size dial), 'flat' (no regime at all)."""
@@ -85,7 +124,7 @@ class _Regime:
 
 
 def run_variant(market, name, cfg, slippage_bps, fixed_notional, regime_mode, reverse=False,
-                initial_cash=50_000.0, warmup=200):
+                initial_cash=50_000.0, warmup=200, allocator=None):
     root = tempfile.mkdtemp(prefix='nsebot_attr_')
     ledger = Ledger(root, 'swing', 1e12 if fixed_notional else initial_cash)
     engine = SwingEngine(cfg, PaperBroker(slippage_bps=slippage_bps), ledger, workdir=root,
@@ -94,6 +133,8 @@ def run_variant(market, name, cfg, slippage_bps, fixed_notional, regime_mode, re
     original = swing_mod.allocate
     if fixed_notional:
         swing_mod.allocate = _fixed_notional_allocate
+    elif allocator is not None:
+        swing_mod.allocate = allocator
     try:
         for d in market.dates[warmup:]:
             engine.run(view, d)
@@ -164,9 +205,22 @@ def run(out_dir):
         ('P4 = DEPLOYED (adds the regime size dial)', base, 5.0, False, 'real', False),
         ('P5 deployed, shallowest dip first', base, 5.0, False, 'real', True),
     ]
+    no_streak = dataclasses.replace(base.swing_breakers, max_consecutive_losses=10**9)
+    cand = dataclasses.replace(base, swing_breakers=no_streak)
+    notional = make_notional_allocate(0.20, 8_000.0)
+    candidates = [
+        ('C1 CANDIDATE: 20%-of-equity notional, min ₹8k, 3% risk cap, capacity on, no size dial, '
+         'no loss-streak breaker (daily-loss & drawdown latch kept)', cand, 'budget'),
+        ('C2 = C1 + loss-streak breaker', base, 'budget'),
+        ('C3 = C1 + regime size dial', cand, 'real'),
+    ]
     results = []
     for name, cfg, slip, fixed, mode, rev in variants:
         r = run_variant(market, name, cfg, slip, fixed, mode, reverse=rev)
+        results.append(r)
+        logger.info(f'  done {name}: {len(r["trades"])} trades')
+    for name, cfg, mode in candidates:
+        r = run_variant(market, name, cfg, 5.0, False, mode, allocator=notional)
         results.append(r)
         logger.info(f'  done {name}: {len(r["trades"])} trades')
 
