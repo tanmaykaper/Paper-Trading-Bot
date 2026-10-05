@@ -252,6 +252,32 @@ Findings:
    - **Spread at the open:** ignored because orders are assumed to fill in NSE's pre-open call auction at the opening price.
    - **Partially locked circuit days:** only bars locked all day are blocked.
 
+## Round 7: the live momentum engine replayed on real history (run 37304737290)
+
+`nsebot/research/momentum_replay.py` runs the deployed `MomentumEngine`, session by session, over the round-6 universe (every NSE-listed stock, 1,755 ever eligible) from 11 Jul 2017. It uses the live paper broker: 5 bps slippage, tick snapping, sizing on the close, and no look-ahead on circuit locks. The result is compared with the research simulator's B4 curve.
+
+| | Research B4 | Live engine |
+|---|---|---|
+| CAGR, untouched Jul 2018 – Jul 2023 | +22.6% | **+28.9%** |
+| CAGR, Jul 2018 – Oct 2026 | +30.2% | **+34.9%** |
+| Max drawdown | −52.8% | −50.5% |
+
+| | 18–19 | 19–20 | 20–21 | 21–22 | 22–23 | 23–24 | 24–25 | 25–26 |
+|---|---|---|---|---|---|---|---|---|
+| Research B4 | −14.8% | −1.4% | +133.0% | −14.4% | +34.0% | +95.9% | +35.0% | +11.0% |
+| Live engine | −7.2% | +6.5% | +152.4% | −2.7% | +23.3% | +101.2% | +24.5% | +15.5% |
+
+The live engine ran cleanly through 8 years of real data:
+- 455 rebalances and 288 completed round trips, with ₹19,615 in costs.
+- 5 orders not filled (circuit locks, no trade that day, cash) and 15 sales deferred.
+- 3 rebalances skipped as data faults.
+
+**The live engine did better than the research curve, which frictions alone cannot explain.** The synthetic tests show the two code paths are identical once slippage, tick snapping and close-day sizing are removed, so the gap comes from how real data differs:
+- **Calendar:** the simulator counts "every 5 sessions" on the union of all stocks' trading days, while the engine counts on the Nifty index's sessions. Any date where the two calendars disagree shifts which day the rebalances land on.
+- **Live-data rules:** a holding with no bar that day is kept, data-fault rebalances are skipped, and locked buys leave the slot empty.
+
+A 10-stock momentum book is path-dependent. Until the phase sensitivity is measured, read the gap as a sign that **B4's point estimates carry several points of noise from rebalance timing alone**, not as an edge the live code adds.
+
 ## What the evidence supports
 
 1. **Swing: S4b dip reversion is not proven, and round 5 points negative.**
