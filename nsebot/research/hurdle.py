@@ -58,21 +58,40 @@ def _get_json(url, params=None, attempts=3):
             time.sleep(2 * (i + 1))
 
 
-def smallcap_funds(fetch=_get_json):
+# mfapi.in's search returns a capped list, so one broad query is dominated by
+# the newer index-fund schemes. Query per fund house as well.
+FUND_HOUSES = ['Nippon India', 'Quant', 'SBI', 'Axis', 'HDFC', 'Kotak', 'DSP', 'Tata',
+               'Canara Robeco', 'Bandhan', 'Invesco India', 'Franklin India', 'ICICI Prudential',
+               'Edelweiss', 'Union', 'Sundaram', 'Aditya Birla Sun Life', 'Mahindra Manulife', 'HSBC',
+               'PGIM India', 'Motilal Oswal', 'Bank of India', 'LIC MF', 'Baroda BNP Paribas', 'ITI',
+               'Quantum', 'WhiteOak Capital', 'Groww', 'Helios', 'UTI', 'Mirae Asset', 'Bajaj Finserv',
+               'JM Financial', 'Shriram', 'Samco', 'Navi', 'Zerodha', 'Trust', 'Old Bridge', 'NJ']
+SMALLCAP_WORDS = ('small cap', 'smallcap', 'small-cap', 'smaller companies')
+
+
+def smallcap_funds(fetch=_get_json, stats=None):
     """{scheme name: NAV series} for Direct-Growth smallcap funds."""
+    stats = stats if stats is not None else {}
+    queries = ['small cap', 'smallcap', 'smaller companies'] + \
+        [f'{h} small cap' for h in FUND_HOUSES] + [f'{h} smallcap' for h in FUND_HOUSES]
     seen, funds = set(), {}
-    for q in ('small cap', 'smallcap'):
-        for row in fetch(f'{MFAPI}/mf/search', {'q': q}) or []:
+    for q in queries:
+        hits = fetch(f'{MFAPI}/mf/search', {'q': q}) or []
+        stats['search_hits'] = stats.get('search_hits', 0) + len(hits)
+        for row in hits:
             name, code = str(row.get('schemeName', '')), row.get('schemeCode')
             low = name.lower()
-            if code in seen or not ('small cap' in low or 'smallcap' in low):
-                continue
-            if 'direct' not in low or 'growth' not in low or any(x in low for x in EXCLUDE):
+            if code in seen or not any(w in low for w in SMALLCAP_WORDS):
                 continue
             seen.add(code)
+            stats['smallcap_named'] = stats.get('smallcap_named', 0) + 1
+            if 'direct' not in low or 'growth' not in low or any(x in low for x in EXCLUDE):
+                continue
+            stats['direct_growth'] = stats.get('direct_growth', 0) + 1
             data = fetch(f'{MFAPI}/mf/{code}') or {}
             rows = data.get('data') or []
             if len(rows) < 100:
+                stats['short_history'] = stats.get('short_history', 0) + 1
                 continue
             s = pd.Series({pd.to_datetime(r['date'], format='%d-%m-%Y'): float(r['nav'])
                            for r in rows if r.get('nav') not in (None, '', 'N.A.')}).sort_index()
@@ -109,8 +128,15 @@ def bot_variants(universe, index_df, window_start):
         eq, _ = simulate_rotation(P, score, P.liquid, n=n, risk_on=risk_on if flt else None)
         curves[name] = eq
 
-    _, c1, _, _ = run_backtest(universe, index_df)
-    curves['C1 deployed dip-reversion engine (Phase 4b)'] = c1
+    latches = {}
+    for label, uni, idx in (('C1 deployed engine, started on the full history', universe, index_df),
+                            ('C1 deployed engine, started 520 days back (as in its own backtest)',
+                             {s: d.iloc[-520:] for s, d in universe.items()}, index_df.iloc[-520:])):
+        _, eq, _, led = run_backtest(uni, idx)
+        curves[label] = eq
+        latch = os.path.join(os.path.dirname(led.dir), 'BREAKER_TRIPPED_swing')
+        latches[label] = open(latch).read().strip() if os.path.exists(latch) else None
+    c1 = curves['C1 deployed engine, started on the full history']
     m1 = curves['M1 12-1 momentum, top 10, Nifty > 200-day SMA filter']
     common = c1.index.intersection(m1.dropna().index)
     common = common[common >= window_start]
@@ -118,7 +144,7 @@ def bot_variants(universe, index_df, window_start):
         a = m1.reindex(common) / m1.reindex(common).iloc[0]
         b = c1.reindex(common) / c1.reindex(common).iloc[0]
         curves['B1 70% M1 + 30% C1'] = 50_000 * (0.7 * a + 0.3 * b)
-    return curves, P
+    return curves, P, latches
 
 
 def run(out_dir):
@@ -132,10 +158,11 @@ def run(out_dir):
 
     # Same window as the full-engine backtest reported to date.
     window_start = pd.Timestamp('2024-06-11')
-    curves, P = bot_variants(universe, index_df, window_start)
+    curves, P, latches = bot_variants(universe, index_df, window_start)
     window_end = P.dates[-1]
 
-    funds = smallcap_funds()
+    fund_stats = {}
+    funds = smallcap_funds(stats=fund_stats)
     rows = []
     for name, nav in funds.items():
         st = curve(nav, window_start, window_end)
@@ -161,7 +188,8 @@ def run(out_dir):
                 md.append(f"| {n[:70]}{tag} | {s['ret'] * 100:+.1f}% | {s['cagr'] * 100:+.1f}% | "
                           f"{s['maxdd'] * 100:.1f}% |")
     else:
-        md += ['_Fund data unavailable this run (mfapi.in unreachable)._']
+        md += ['_No ACTIVE smallcap fund with full-window history was retrieved this run._']
+    md += ['', f'Fund retrieval: {fund_stats}', '']
     if passive:
         md += ['', '| passive smallcap index fund | total | CAGR | max DD |', '|---|---|---|---|']
         for n, s in passive[:3]:
@@ -184,6 +212,8 @@ def run(out_dir):
         md.append(f"| {name} | {st['ret'] * 100:+.1f}% | {st['cagr'] * 100:+.1f}% | {st['maxdd'] * 100:.1f}% | "
                   f"{h1['ret'] * 100:+.1f}% | {h2['ret'] * 100:+.1f}% | "
                   f"{'yes' if st['cagr'] > median else 'no'} | {'**YES**' if st['cagr'] > best else 'no'} |")
+    for label, txt in latches.items():
+        md.append(f"- {label}: drawdown latch {'**TRIPPED** — ' + txt.splitlines()[0] if txt else 'not tripped'}")
     md += ['', '_The best fund is chosen with hindsight; the market-filter variants were designed after '
                'seeing momentum crash in late 2024, so their numbers are not out-of-sample evidence._']
     report = '\n'.join(md)

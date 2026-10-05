@@ -18,7 +18,9 @@ def _fake_fetch(url, params=None):
 
 
 def test_only_direct_growth_smallcap_schemes_are_kept():
-    funds = smallcap_funds(fetch=_fake_fetch)
+    stats = {}
+    funds = smallcap_funds(fetch=_fake_fetch, stats=stats)
+    assert stats['smallcap_named'] == 4 and stats['direct_growth'] == 2
     assert set(funds) == {'Alpha Small Cap Fund - Direct Plan - Growth',
                           'Gamma Nifty Smallcap 250 Index Fund - Direct - Growth'}
 
@@ -35,7 +37,8 @@ def test_bot_variants_run_on_synthetic_data():
     u = {f'S{i}': daily_frame(300 * np.exp(np.cumsum(rng.normal(0.0008 + 0.0002 * i, 0.015, 420))),
                               400_000.0) for i in range(14)}
     idx = daily_frame(20000 * np.exp(np.cumsum(np.full(420, 0.0006))))
-    curves, P = bot_variants(u, idx, P_start := pd.Timestamp(u['S0']['datetime'].iloc[260]))
+    curves, P, latches = bot_variants(u, idx, pd.Timestamp(u['S0']['datetime'].iloc[260]))
     assert {'M1 12-1 momentum, top 10, Nifty > 200-day SMA filter',
-            'C1 deployed dip-reversion engine (Phase 4b)'} <= set(curves)
+            'C1 deployed engine, started on the full history'} <= set(curves)
+    assert len(latches) == 2
     assert np.isfinite(curves['M4 12-1 momentum, top 10, no filter (reference)'].iloc[-1])
