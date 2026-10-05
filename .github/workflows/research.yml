@@ -21,9 +21,9 @@ on:
       - '.github/workflows/research.yml'
   workflow_dispatch:
     inputs:
-      mode:
-        description: 'swing | intraday | all'
-        default: 'all'
+      study:
+        description: 'experiments | event_study'
+        default: 'experiments'
 
 permissions:
   contents: read
@@ -60,7 +60,13 @@ jobs:
           pip install --upgrade pip
           pip install pandas numpy yfinance
       - name: Signal research on real NSE data
-        run: python -m nsebot.research.event_study --mode "${{ github.event.inputs.mode || 'all' }}" --out research_results
+        env:
+          STUDY: ${{ github.event.inputs.study || 'experiments' }}
+        run: |
+          case "$STUDY" in
+            experiments|event_study) python -m "nsebot.research.$STUDY" --out research_results ;;
+            *) echo "unknown study: $STUDY" && exit 1 ;;
+          esac
       - uses: actions/upload-artifact@v4
         if: always()
         with:
