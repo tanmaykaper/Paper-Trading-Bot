@@ -276,7 +276,37 @@ The live engine ran cleanly through 8 years of real data:
 - **Calendar:** the simulator counts "every 5 sessions" on the union of all stocks' trading days, while the engine counts on the Nifty index's sessions. Any date where the two calendars disagree shifts which day the rebalances land on.
 - **Live-data rules:** a holding with no bar that day is kept, data-fault rebalances are skipped, and locked buys leave the slot empty.
 
-A 10-stock momentum book is path-dependent. Until the phase sensitivity is measured, read the gap as a sign that **B4's point estimates carry several points of noise from rebalance timing alone**, not as an edge the live code adds.
+A 10-stock momentum book is path-dependent. Round 8 measures the timing effect and shows it explains the whole gap.
+
+## Round 8: how much is rebalance timing? (run 37307117354)
+
+Post-hoc diagnostic (`nsebot/research/momentum_phase.py`). A rebalance every 5 sessions has 5 possible phases; which one a run gets depends on its first day and on the calendar it counts on. This reruns the research simulator's B4 at all 5 phases, on both calendars.
+
+The calendars differ on just **5 dates**: stock bars on days that aren't Nifty sessions, including the Diwali muhurat sessions of 27 Oct 2019 and 14 Nov 2020 and New Year's Day 2018 and 2019. That is enough to shift every later rebalance day.
+
+| Calendar | Phase | CAGR, untouched Jul 2018 – Jul 2023 | CAGR, Jul 2018 – Oct 2026 | Max DD |
+|---|---|---|---|---|
+| Union of stock days (rounds 5–6) | +0 (round 6's run) | +22.6% | +30.2% | −52.8% |
+| | +1 | +32.3% | +37.7% | −52.2% |
+| | +2 | +32.6% | +35.5% | −50.5% |
+| | +3 | +28.3% | +33.8% | −48.7% |
+| | +4 | +28.7% | +32.3% | −49.7% |
+| Nifty sessions (live engine's calendar) | +0 | +29.0% | +34.6% | −51.4% |
+| | +1 | +26.5% | +34.1% | −52.8% |
+| | +2 | +31.2% | +34.4% | −51.2% |
+| | +3 | +24.0% | +30.9% | −51.2% |
+| | +4 | +27.1% | +31.5% | −51.1% |
+
+Findings:
+
+1. **The round-7 gap is timing, not code.** On the same calendar and phase, research B4 made +29.0% / +34.6%, and the live engine replay made +28.9% / +34.9%. Live frictions (slippage, ticks, close-day sizing, the live-data rules) cost between nothing and a few tenths of a point.
+2. **Round 6's figure was the unluckiest of the ten runs.** Across all 10, B4's CAGR on the untouched window ranges **+22.6% to +32.6% (median about +28%)**. Over 2018–26 it ranges **+30.2% to +37.7% (median about +34%)**. Worst drawdowns are −48.7% to −52.8%, all inside the 55% latch.
+3. **Against the funds:**
+   - Every run beats the median smallcap fund on both windows (+21.7% untouched, +18.5% full span).
+   - Every run beats the best fund over 2018–26 (+24.5%).
+   - On the untouched window, beating the best fund (+28.7%) is about a coin flip that depends on timing: 4 of 10 runs beat it outright and 1 ties.
+4. **This is a noise measurement, not a choice.** No phase is "picked": the live book gets whatever phase its start date gives it. The honest expectation is the spread, not any single run.
+5. **Caveats from rounds 6–7 still apply:** stocks delisted before today are missing, tax is not modelled, and dividends are not credited in the paper ledger.
 
 ## What the evidence supports
 
@@ -294,7 +324,10 @@ A 10-stock momentum book is path-dependent. Until the phase sensitivity is measu
    - Round 4: nothing qualified.
    - Round 5: D4 passed, but on a list built with hindsight.
    - Round 6: the same momentum design on **every NSE stock** (B4) passes the pre-registered rule.
-     - Untouched 2018–23: +22.6% vs +21.7% for the median fund; no on the best fund (+28.7%).
-     - Full 2018–26: +30.2% vs +24.5% for the best fund.
-   - Expect returns from roughly fund-like to better, with drawdowns past 50%. Beating the best fund is plausible, not established.
-   - Forward paper trading of a momentum sleeve is the next test. It needs its own drawdown policy, since the 25% latch would stop it in an ordinary bad year.
+   - Round 8 shows that test's run was its unluckiest rebalance timing. Across all 10 timings:
+     - Untouched 2018–23: +22.6% to +32.6% CAGR, against +21.7% for the median fund and +28.7% for the best.
+     - 2018–26: +30.2% to +37.7%, against +18.5% for the median and +24.5% for the best.
+     - Worst drawdowns around 50%.
+   - Round 7: the live engine reproduces the research within a few tenths of a point on real data.
+   - Expect to beat the median smallcap fund, plausibly the best one, with drawdowns near 50%.
+   - It runs live on paper from 5 Oct 2026 with its own 55% latch. Forward results are the remaining test.
