@@ -4,6 +4,9 @@
 # is proven here, against the V2 code exactly as it stands in the repo. Run:
 #
 #     python -m pytest diagnostics/test_v2_paralysis.py -v
+#
+# V2's modules now live in legacy/ (retired in Phase 4); this file imports
+# them from there so the autopsy stays reproducible.
 #     python diagnostics/test_v2_paralysis.py          # no pytest needed
 #
 # Each test PASSES when the lock it describes is PRESENT. They are evidence,
@@ -21,7 +24,8 @@ import numpy as np
 import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+LEGACY = os.path.join(ROOT, 'legacy')          # V2 was retired here in Phase 4
+sys.path.insert(0, LEGACY)
 
 import market_state                                     # noqa: E402
 from market_state import MarketState, BreadthPanel     # noqa: E402
@@ -136,7 +140,7 @@ def test_lock_c_pending_plans_die_with_the_runner():
 
 
 def test_lock_c_workflow_does_not_commit_the_state_file():
-    wf = open(os.path.join(ROOT, '.github', 'workflows', 'main.yml')).read()
+    wf = open(os.path.join(LEGACY, 'main_v2.yml')).read()      # the V2-era workflow
     add_lines = [l.strip() for l in wf.splitlines() if l.strip().startswith('git add')]
     assert add_lines, 'workflow has no git add step'
     assert all(orchestrator.STATE_JSON not in l for l in add_lines), add_lines
@@ -147,7 +151,7 @@ def test_lock_c_workflow_does_not_commit_the_state_file():
 # LOCK D — condition conjunction: 27 sequential HOLD exits before a BUY
 # ═════════════════════════════════════════════════════════════════════════════
 def test_lock_d_signal_generator_has_27_sequential_veto_points():
-    src = open(os.path.join(ROOT, 'signal_generator.py')).read()
+    src = open(os.path.join(LEGACY, 'signal_generator.py')).read()
     body = src[src.index('    def _evaluate('):src.index('    def _build_frame(')]
     assert body.count("return 'HOLD'") == 27
 

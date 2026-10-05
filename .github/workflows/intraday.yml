@@ -1,30 +1,33 @@
-# .github/workflows/main.yml — nsebot SWING (CNC) end-of-day cycle
+# .github/workflows/intraday.yml — nsebot INTRADAY (MIS) session, free.
 #
-# Runs after the NSE close on weekdays: fills yesterday's plans at today's
-# open, walks every open position through today's bar (stop / EMA-5 target /
-# 7-session time stop), checks the circuit breakers, and plans tomorrow's
-# entries. Then commits state/ back to the repo — the persistence step V2
-# never had for its own pending book (docs/AUTOPSY_V2.md §2).
+# One job holds the whole session: it starts just after the open, polls
+# Yahoo's 5-minute bars after every bar closes, runs the opening-range
+# breakout engine, and squares everything off at 15:10 IST — before 15:15,
+# and well ahead of Zerodha's own 15:20 auto-square-off and its fee. GitHub
+# caps a job at 6 hours; 09:18 -> 15:12 fits.
 #
-# Free: Yahoo daily bars, paper broker. Optional email via the existing
-# EMAIL_SENDER / EMAIL_PASSWORD / EMAIL_RECIPIENT secrets.
-# Re-runs are safe: a session already processed is skipped.
+# Sizing note: no intraday variant has passed out-of-sample yet
+# (docs/RESEARCH.md), so the Kelly sizer trades the 0.5% risk floor and this
+# job is, honestly, live data collection until its own trades say otherwise.
+#
+# State is committed at the end of the session (and on failure), so the
+# breaker counters and trade journal persist between days.
 
-name: NSE Paper Trading Bot
+name: NSE Intraday Bot
 
 on:
   schedule:
-    - cron: '45 11 * * 1-5'      # 17:15 IST, Mon-Fri (NSE closes 15:30; Yahoo settles by then)
+    - cron: '48 3 * * 1-5'       # 09:18 IST, Mon-Fri
   workflow_dispatch:
 
 concurrency:
-  group: nsebot-state            # shared with intraday.yml: one writer of state/ at a time
+  group: nsebot-state
   cancel-in-progress: false
 
 jobs:
-  swing:
+  intraday:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 355
     permissions:
       contents: write
     steps:
@@ -37,13 +40,13 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Swing end-of-day cycle
+      - name: Intraday session (until 15:10 square-off)
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
           NSEBOT_BROKER: paper
-        run: python -m nsebot swing
+        run: python -m nsebot intraday
       - name: Commit state
         if: always()
         run: |
@@ -54,7 +57,7 @@ jobs:
             echo "state unchanged"
             exit 0
           fi
-          git commit -m "📊 swing EOD $(TZ=Asia/Kolkata date +'%Y-%m-%d') [skip ci]"
+          git commit -m "📈 intraday $(TZ=Asia/Kolkata date +'%Y-%m-%d') [skip ci]"
           for i in 1 2 3 4; do
             git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
             sleep $((i * 5))

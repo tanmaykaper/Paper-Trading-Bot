@@ -1,0 +1,3 @@
+# Optional: live execution / paid market data through Zerodha Kite Connect
+-r requirements.txt
+kiteconnect>=5.0

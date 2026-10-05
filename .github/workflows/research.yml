@@ -22,8 +22,8 @@ on:
   workflow_dispatch:
     inputs:
       study:
-        description: 'experiments | event_study'
-        default: 'experiments'
+        description: 'backtest | experiments | event_study'
+        default: 'backtest'
 
 permissions:
   contents: read
@@ -41,7 +41,7 @@ jobs:
       - name: Install
         run: |
           pip install --upgrade pip
-          pip install pandas numpy yfinance requests beautifulsoup4 python-dotenv pytest
+          pip install -r requirements.txt pytest requests beautifulsoup4 python-dotenv
       - name: Unit tests
         run: python -m pytest tests diagnostics -q
 
@@ -58,12 +58,13 @@ jobs:
       - name: Install
         run: |
           pip install --upgrade pip
-          pip install pandas numpy yfinance
+          pip install -r requirements.txt
       - name: Signal research on real NSE data
         env:
-          STUDY: ${{ github.event.inputs.study || 'experiments' }}
+          STUDY: ${{ github.event.inputs.study || 'backtest' }}
         run: |
           case "$STUDY" in
+            backtest) python -m nsebot backtest --out research_results ;;
             experiments|event_study) python -m "nsebot.research.$STUDY" --out research_results ;;
             *) echo "unknown study: $STUDY" && exit 1 ;;
           esac

@@ -1,3 +1,10 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.cache/
+research_results/
+# Kite credentials — never commit
+.kite_token.json
+.env
+# breaker latches and kill switch are local, deliberate human controls
+BREAKER_TRIPPED_*

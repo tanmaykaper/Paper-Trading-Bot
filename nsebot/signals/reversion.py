@@ -57,17 +57,26 @@ class ReversionSignalEngine:
     def scan(self, universe, asof=None):
         """Today's dips, deepest first. Only symbols that printed the as-of
         session can signal."""
-        feats = {s: self.features(df) for s, df in universe.items()
+        feats = {s: self.features(df).set_index('datetime') for s, df in universe.items()
                  if df is not None and len(df) >= 30}
         if not feats:
             return []
         if asof is None:
-            asof = max(f['datetime'].iloc[-1] for f in feats.values())
+            asof = max(f.index[-1] for f in feats.values())
+        return self.signals_from_features(feats, asof)
+
+    def signals_from_features(self, feats, asof):
+        """feats: {symbol: features() frame indexed by datetime}. The one place a
+        Signal is built, shared by live scans and the portfolio backtest."""
         asof = pd.Timestamp(asof)
         out = []
         for sym, f in feats.items():
-            last = f.iloc[-1]
-            if last['datetime'] != asof or not bool(last['signal']):
+            if asof not in f.index:
+                continue
+            last = f.loc[asof]
+            if isinstance(last, pd.DataFrame):
+                last = last.iloc[-1]
+            if not bool(last['signal']):
                 continue
             out.append(Signal(
                 symbol=sym, mode='swing', side='LONG', trigger='dip_reversion', asof=asof,
