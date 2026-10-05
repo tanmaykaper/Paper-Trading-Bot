@@ -191,7 +191,11 @@ def top_k_per_day(signal, score, k):
 # ═════════════════════════════════════════════════════════════════════════════
 # Rotation simulator (equal weight, integer shares, CNC costs)
 # ═════════════════════════════════════════════════════════════════════════════
-def simulate_rotation(P, score, eligible, n=5, band=None, every=5, capital=ROTATION_CAPITAL):
+def simulate_rotation(P, score, eligible, n=5, band=None, every=5, capital=ROTATION_CAPITAL,
+                      risk_on=None):
+    """risk_on: optional per-date bool array. On a rebalance date where it is
+    False the book goes to cash (sells everything at the next open, buys
+    nothing) — the classic absolute-momentum / 200-day market filter."""
     o, c = P.a['open'], P.a['close']
     T, N = c.shape
     band = band or 3 * n
@@ -210,16 +214,17 @@ def simulate_rotation(P, score, eligible, n=5, band=None, every=5, capital=ROTAT
         rank = np.empty(N, dtype=int)
         rank[order] = np.arange(N)
         valid = np.isfinite(sc)
-        # Sell: no longer eligible or fallen out of the band.
+        off = risk_on is not None and not bool(risk_on[t])
+        # Sell: market filter off, no longer eligible, or fallen out of the band.
         for j in np.flatnonzero(qty > 0):
-            if (not valid[j] or rank[j] >= band) and np.isfinite(o[t + 1, j]):
+            if (off or not valid[j] or rank[j] >= band) and np.isfinite(o[t + 1, j]):
                 v = qty[j] * o[t + 1, j]
                 fee = DEFAULT_CHARGES.cnc(0.0, v)
                 cash += v - fee
                 costs += fee
                 qty[j] = 0
         # Buy: fill empty slots from the top of the ranking.
-        slots = n - int((qty > 0).sum())
+        slots = 0 if off else n - int((qty > 0).sum())
         target = equity[t] / n
         for j in order:
             if slots <= 0 or not valid[j]:
