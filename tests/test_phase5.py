@@ -42,3 +42,15 @@ def test_leveraged_sleeve_pays_financing_only_while_invested(monkeypatch):
     curves, _, _ = phase5.designs({}, idx)
     e4 = curves['E4 leveraged momentum: D2 at 1.5x, 15%/yr financing']
     assert e4.iloc[-1] == 50_000.0
+
+
+def test_freeze_stats_reports_floor_and_latch_dates():
+    from nsebot.research.phase5_diag import freeze_stats
+    dates = pd.bdate_range('2018-01-01', periods=10)
+    eq = pd.Series([50_000, 52_000, 45_000, 39_500, 38_000, 38_000, 38_000, 38_000, 38_000, 38_000.0], index=dates)
+    trades = pd.DataFrame({'entry_time': [dates[0], dates[2]]})
+    st = freeze_stats(eq, trades, floor_equity=40_000, dd_limit=0.25, win_start=dates[5])
+    assert st['first_below_floor'] == dates[3]          # 39.5k < 40k: every 20% position is now < ₹8k
+    assert st['first_latch'] == dates[4]                # 38k is 26.9% below the 52k peak
+    assert st['entries_before_window'] == 2 and st['entries_in_window'] == 0
+    assert st['equity_at_window_start'] == 38_000
