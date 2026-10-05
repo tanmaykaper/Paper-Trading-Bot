@@ -1,0 +1,76 @@
+# .github/workflows/research.yml
+#
+# Tests + real-data signal research for the nsebot rebuild. Runs on every push
+# to a claude/** branch that touches the engine, and on demand. Read-only: it
+# never commits, never touches paper_trades.csv, never places an order.
+#
+# The research job downloads ~2 years of daily bars and ~59 days of 5-minute
+# bars from Yahoo (free) and measures every historical trigger from the exact
+# signal code the bot trades. Results land in the job summary and as an
+# artifact.
+
+name: nsebot research
+
+on:
+  push:
+    branches: ['claude/**']
+    paths:
+      - 'nsebot/**'
+      - 'tests/**'
+      - 'diagnostics/**'
+      - '.github/workflows/research.yml'
+  workflow_dispatch:
+    inputs:
+      study:
+        description: 'backtest | hurdle | attribution | experiments | event_study'
+        default: 'backtest'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt pytest requests beautifulsoup4 python-dotenv
+      - name: Unit tests
+        run: python -m pytest tests diagnostics -q
+
+  research:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Signal research on real NSE data
+        env:
+          STUDY: ${{ github.event.inputs.study || 'backtest' }}
+        run: |
+          case "$STUDY" in
+            backtest) python -m nsebot backtest --out research_results ;;
+            hurdle|attribution|experiments|event_study) python -m "nsebot.research.$STUDY" --out research_results ;;
+            *) echo "unknown study: $STUDY" && exit 1 ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: research-results
+          path: research_results/
+          if-no-files-found: ignore
