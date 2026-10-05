@@ -85,7 +85,8 @@ def allocate(signals, open_positions, cfg, *, equity, cash, edge, regime_mult=1.
                              heat_room=plan.heat_cap - plan.heat_used,
                              lot_size=lot_size_of(sig.symbol))
         if not size.ok:
-            plan.declined.append((sig.symbol, f'sized to zero (binding: {size.binding})'))
+            why = f'binding: {size.binding}' + (f' — {size.notes}' if size.notes else '')
+            plan.declined.append((sig.symbol, f'sized to zero ({why})'))
             continue
         plan.orders.append(Order(sig.symbol, sig.side, size.qty, sig.ref_price, sig.stop,
                                  size, sig, product))

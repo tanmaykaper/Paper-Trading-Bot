@@ -18,12 +18,14 @@ This is V3, a rebuild after V2 stopped trading on 14 Sep 2026. The full story is
 
 All numbers below come from the bot's own code run on real NSE data, net of Zerodha costs.
 
-- **Momentum (the main candidate for the smallcap-fund target).** The only design that passed a pre-registered test on a symbol list without hindsight (every NSE-listed stock), net of Zerodha costs:
-  - Untouched Jul 2018 – Jul 2023: **+22.6% CAGR**, against +21.7% for the median active smallcap fund and +28.7% for the best.
-  - Jul 2018 – Oct 2026: **+30.2% CAGR**, against +18.5% for the median fund and +24.5% for the best.
-  - Worst drawdown **−52.8%**, deeper than any fund's. It lost about 15% in 2018–19 and in 2021–22, years when the median fund made money.
-  - Still flattering: stocks delisted before today are missing from the data. Short-term capital gains tax is not modelled (the report estimates it).
-  - Expect returns somewhere between fund-like and better, with deep falls. Beating the best fund is plausible, not proven. Details: [`docs/RESEARCH.md`](docs/RESEARCH.md), rounds 5–6.
+- **Momentum (the main candidate for the smallcap-fund target).** The only design that passed a pre-registered test on a symbol list without hindsight (every NSE-listed stock), net of Zerodha costs. A 10-stock book rebalanced every 5 sessions is sensitive to *which* day it rebalances on, so the figures below are the range over all 5 rebalance days on both calendars (10 runs):
+  - Untouched Jul 2018 – Jul 2023: **+22.6% to +32.6% CAGR** (median about +28%), against +21.7% for the median active smallcap fund and +28.7% for the best.
+  - Jul 2018 – Oct 2026: **+30.2% to +37.7% CAGR** (median about +34%), against +18.5% for the median fund and +24.5% for the best.
+  - Every run beats the median fund in both periods and the best fund over 2018–26. On the untouched window, beating the best fund is about a coin flip on timing.
+  - Worst drawdown **−49% to −53%**, deeper than any fund's. In its weaker timings it lost about 15% in 2018–19 and 2021–22, years when the median fund made money.
+  - The live engine, replayed on real data, matches the research within a few tenths of a point on the same rebalance days. Slippage, tick sizes and close-day sizing cost almost nothing.
+  - Still flattering: stocks delisted before today are missing from the data. Short-term capital gains tax is not modelled (the report estimates it), and dividends are not credited.
+  - Expect to beat the median smallcap fund, plausibly the best one, with drawdowns near 50%. Details: [`docs/RESEARCH.md`](docs/RESEARCH.md), rounds 5–8.
 - **Swing.** S4b dip reversion passed a pre-registered out-of-sample test on 2023–26 data (**+0.69% per trade, 64% win rate, 168 trades**; 95% interval about −0.06% to +1.44%).
   - It **failed on untouched 2018–2020 data**: −4.9% and −11.8% in the two years it traded, then it hit the 25% drawdown latch in the COVID crash.
   - It keeps running on paper because that costs nothing. Don't expect it to carry the target.
