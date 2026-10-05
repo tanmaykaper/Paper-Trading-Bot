@@ -107,7 +107,7 @@ class CircuitBreakers:
         dd = (peak - equity) / peak if peak > 0 else 0.0
         if dd >= self.cfg.max_drawdown_pct and not os.path.exists(latch):
             with open(latch, 'w') as fh:
-                fh.write(f'{self.mode} drawdown {dd:.1%} from peak {peak:,.0f} on {date.today()}\n'
+                fh.write(f'{self.mode} drawdown {dd:.1%} from peak {peak:,.0f} on {self.s["session"] or date.today()}\n'
                          f'Delete this file to resume new entries.\n')
         if os.path.exists(latch):
             reasons.append(f'max drawdown breaker latched ({latch}) — delete it to resume')

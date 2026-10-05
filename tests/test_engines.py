@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -92,6 +94,43 @@ def test_missed_runs_catch_up_bar_by_bar(swing_world, tmp_path):
     trade = L.closed_trades().iloc[0]
     assert pd.Timestamp(trade['entry_time']) == market.dates[i + 1]  # still the next-open fill
     assert pd.Timestamp(trade['exit_time']) < market.dates[i + 6]    # exited on the right bar
+
+
+def _small_book(root, cash=38_000, lift=True):
+    cfg = BotConfig()
+    if not lift:
+        cfg = dataclasses.replace(cfg, swing_sizing=dataclasses.replace(cfg.swing_sizing,
+                                                                        lift_to_floor=False))
+    L = Ledger(str(root), 'swing', cash)
+    return SwingEngine(cfg, PaperBroker(slippage_bps=5), L, workdir=str(root), log=lambda m: None)
+
+
+def test_a_book_below_40k_keeps_trading(swing_world, tmp_path):
+    market, t = swing_world
+    rep = _small_book(tmp_path).run(market, t)
+    assert [p[0] for p in rep['placed']] == ['DIP']
+    assert rep['placed'][0][4] == 'minimum notional (lifted)'
+
+
+def test_a_starved_book_says_it_is_not_trading(tmp_path):
+    """Signals, free slots, nothing opened, three sessions running: warn — the
+    shape of V2's paralysis and of the round-5 floor freeze."""
+    frames = {f'DIP{k}': _dip_then_bounce(260 + k, seed=3 + k)[0] for k in range(3)}
+    index = daily_frame(20000 * np.exp(np.cumsum(np.full(270, 0.0008))))
+    market = DailyMarket(frames, index)
+    days = market.dates[262:265]                      # DIP0, DIP1, DIP2 signal on consecutive days
+
+    frozen = _small_book(tmp_path / 'off', lift=False)
+    reps = [frozen.run(market, d) for d in days]
+    assert [r['signals'] for r in reps] == [1, 1, 1] and not any(r['placed'] for r in reps)
+    assert not reps[1]['warnings']
+    assert any(w.startswith('NOT TRADING: 3 sessions') for w in reps[2]['warnings'])
+
+    fixed = _small_book(tmp_path / 'on')
+    reps = [fixed.run(market, d) for d in days]
+    assert reps[0]['placed'] and reps[1]['placed']
+    assert reps[2]['declined'] == [('DIP2', 'sector OTHER at its cap of 2')]   # a real cap, not starvation
+    assert not any(r['warnings'] for r in reps)
 
 
 def test_kill_switch_blocks_entries_but_not_exits(swing_world, tmp_path):

@@ -71,7 +71,7 @@ def cmd_swing(args):
     md = swing_report(rep, ledger.state['initial_cash'])
     print(md)
     job_summary(md)
-    if rep.get('filled') or rep.get('closed') or rep.get('placed') or rep.get('breakers'):
+    if rep.get('filled') or rep.get('closed') or rep.get('placed') or rep.get('breakers') or rep.get('warnings'):
         send_email(f"nsebot swing {rep['asof']} — equity ₹{rep.get('equity', 0):,.0f}", md)
     return 0
 

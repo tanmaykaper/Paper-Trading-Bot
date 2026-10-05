@@ -121,6 +121,9 @@ class SizingConfig:
     sizing_mode: str = 'risk'                # 'risk' (Kelly) | 'notional'
     target_notional_pct: float = 0.20        # notional mode: share of equity per position
     min_notional_inr: float = 0.0            # skip (never shrink) below this; 0 = no floor
+    lift_to_floor: bool = False              # notional mode: when equity x target_notional_pct has
+                                             # fallen below the floor, size UP to the floor if every
+                                             # other cap allows — else the book freezes for good
     use_regime_size: bool = True             # let the regime dial scale size (else only entry count)
     edge_warn_min_trades: int = 60           # warn when realised Kelly < 0 after this many trades
 
@@ -158,11 +161,13 @@ def swing_sizing():
     # at 3% of equity, 5 slots, 2 per sector; heat cap = 5 x 3% so the per-trade
     # cap is what binds. The regime dial limits entry COUNT only. Kelly prior
     # (S4b out-of-sample: 64% win, payoff 0.89) feeds the edge monitor.
+    # Below ₹40k equity 20% < ₹8k: positions are lifted to ₹8k while the caps
+    # allow, instead of skipping every signal forever (round 5 found that freeze).
     return SizingConfig(prior_win_rate=0.64, prior_payoff=0.89, kelly_fraction=0.5,
                         risk_floor_pct=0.0075, risk_cap_pct=0.03, max_positions=5,
                         max_position_pct=0.40, leverage=1.0, max_portfolio_heat_pct=0.15,
                         max_per_sector=2, sizing_mode='notional', target_notional_pct=0.20,
-                        min_notional_inr=8_000.0, use_regime_size=False)
+                        min_notional_inr=8_000.0, lift_to_floor=True, use_regime_size=False)
 
 
 def intraday_sizing():

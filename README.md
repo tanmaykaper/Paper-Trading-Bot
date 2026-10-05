@@ -69,12 +69,13 @@ A session that has already been processed is skipped, so re-runs are safe. Misse
 
 | Control | Swing | Intraday |
 |---|---|---|
-| Sizing | **Notional**: 20% of equity per position. A trade that can't reach ₹8k is skipped, never shrunk. | Half-Kelly on net R, shrunk toward the out-of-sample prior |
+| Sizing | **Notional**: 20% of equity per position. A trade that can't reach ₹8k is skipped, never shrunk. Below ₹40k equity, where 20% is under ₹8k, positions are raised to ₹8k while every other cap allows it, so a shrunken book doesn't freeze. | Half-Kelly on net R, shrunk toward the out-of-sample prior |
 | Risk per trade | Capped at 3% of equity. Kelly is monitored and reported, but doesn't set the size. | 0.5% floor (measured edge is negative) to 2% cap |
 | Buying power | Cash × 1 (CNC) | Cash × 5 (MIS margin) |
 | Other caps | 5 positions, 2 per sector, 15% total open risk, ≤1% of the stock's daily traded value. The regime dial limits only the number of new entries per day. | 3 positions, 5% total open risk, 1 per sector |
 | Consecutive-loss breaker | **None.** In dip reversion, losses cluster just before the best rebounds. | 3 losses: done for the day. The next session trades at half size until a winner, then reduced size expires anyway. |
 | Edge monitor | Warns when the bot's own Kelly estimate is negative after 60 or more trades | Same |
+| Paralysis alert | Warns (and emails) after 3 sessions in a row with signals and free slots but no entry | — |
 | Daily loss limit | 5% | 3%, closes everything |
 | Drawdown latch | 25% from peak: entries stop until a human deletes `BREAKER_TRIPPED_<mode>` | Same |
 | Kill switch | Create a file named `STOP_TRADING` | Same |

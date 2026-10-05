@@ -10,7 +10,10 @@ One call per session, after the close:
               Catching up bar-by-bar means a missed run never skips a stop.
   3 BREAKERS  mark equity, check loss streak / daily loss / drawdown / kill file.
   4 ENTRIES   today's dip signals -> half-Kelly sizing under the cap stack ->
-              plans that fill at tomorrow's open.
+              plans that fill at tomorrow's open. A run of sessions where
+              signals arrive, slots are free and sizing still opens nothing
+              raises a warning: that is how V2 died, and round 5 found the
+              same shape in this engine (docs/RESEARCH.md).
   5 PERSIST   state.json, trades.csv, equity.csv — committed by the workflow.
 
 Idempotent: a session that has already been processed is skipped, so a
@@ -31,6 +34,7 @@ from .book import Book
 logger = logging.getLogger(__name__)
 
 PENDING_EXPIRY_SESSIONS = 3
+STARVED_ALERT_SESSIONS = 3          # signals + free slots + nothing opened, this many sessions running
 
 
 class SwingEngine:
@@ -126,6 +130,7 @@ class SwingEngine:
                 f'— review the strategy; create STOP_TRADING to pause entries')
         signals = market.signals(asof) if verdict.entries_allowed else []
         report['signals'] = len(signals)
+        plan = None
         if signals:
             occupied = list(L.positions) + [self._pending_as_position(p) for p in st['pending']]
             cash = self.broker.available_cash(L.cash) - self.book.reserved_for_pending()
@@ -155,6 +160,8 @@ class SwingEngine:
                 self.log(f'  ◆ plan {o.symbol} {o.qty} sh (ref ₹{o.ref_price:.2f}, stop ₹{spec.stop:.2f}, '
                          f'risk {o.sizing.risk_pct * 100:.2f}%, binding: {o.sizing.binding})')
 
+        self._watch_starvation(plan, report)
+
         # 5 ── persist ───────────────────────────────────────────────────────
         st['last_processed'] = str(asof.date())
         st['breakers'] = self.breakers.state()
@@ -169,6 +176,28 @@ class SwingEngine:
         report['open_positions'] = [(p.symbol, p.qty, p.entry_price, p.stop) for p in L.positions]
         report['pending'] = [(p['spec']['symbol'], p['spec']['qty']) for p in st['pending']]
         return report
+
+    def _watch_starvation(self, plan, report):
+        """Count sessions in a row where signals arrived, slots were free and
+        sizing or the broker still opened nothing. Placing an order or having
+        no free slot resets it — a full book is a working book. Sessions with
+        no signals leave the count as it is."""
+        st = self.L.state
+        if plan is None:
+            return
+        n = int(st.get('starved_sessions', 0))
+        if report['placed'] or getattr(plan, 'slots_free', 0) <= 0:
+            n = 0
+        elif any(r.startswith(('sized to zero', 'order failed')) for _, r in report['declined']):
+            n += 1
+        st['starved_sessions'] = n
+        if n >= STARVED_ALERT_SESSIONS:
+            reasons = sorted({r for _, r in report['declined']
+                              if r.startswith(('sized to zero', 'order failed'))})
+            report['warnings'].append(
+                f'NOT TRADING: {n} sessions in a row with signals and free slots but no entry '
+                f'({"; ".join(reasons)}) — check equity against the ₹{self.sizing.min_notional_inr:,.0f} '
+                f'floor and the caps')
 
     @staticmethod
     def _pending_as_position(p):

@@ -112,12 +112,36 @@ def size_position(cfg, *, equity, cash, entry, stop, edge, regime_mult=1.0, brea
     lot = max(int(lot_size), 1)
     qty = int(math.floor(caps[binding] / lot)) * lot
     floor = float(getattr(cfg, 'min_notional_inr', 0.0) or 0.0)
-    if qty >= 1 and floor and qty * entry < floor:
-        # Skip, never shrink: below the floor the flat charges eat the edge.
-        return SizeDecision(0, 0.0, 0.0, 0.0, 'below minimum notional',
-                            f'₹{qty * entry:,.0f} < ₹{floor:,.0f} floor (binding: {binding})')
+    if floor and qty * entry < floor:
+        lifted = _lift_to_floor(cfg, caps, equity, entry, floor, lot, scale)
+        if lifted:
+            qty, binding = lifted, 'minimum notional (lifted)'
+        elif qty >= 1:
+            # Skip, never shrink: below the floor the flat charges eat the edge.
+            return SizeDecision(0, 0.0, 0.0, 0.0, 'below minimum notional',
+                                f'₹{qty * entry:,.0f} < ₹{floor:,.0f} floor (binding: {binding})')
     note = ''
     if getattr(cfg, 'sizing_mode', 'risk') == 'risk' and not edge.edge_positive:
         note = f'measured edge negative (Kelly {edge.kelly_full:+.3f}) — floor size'
     return SizeDecision(qty, round(qty * risk_ps, 2), round(qty * entry, 2),
                         round(qty * risk_ps / equity, 5), binding, note)
+
+
+def _lift_to_floor(cfg, caps, equity, entry, floor, lot, scale):
+    """Shares that reach the floor when the TARGET itself has fallen below it.
+
+    At 20% notional the ₹8k floor binds once equity is under ₹40k. Without
+    this, every later signal is skipped and the book never trades again — a
+    silent freeze (docs/RESEARCH.md, round 5). Instead the position is raised
+    to the floor, as long as every other cap (risk cap, buying power,
+    concentration, liquidity, heat) still allows it. Applies only to that
+    case: integer-share rounding at normal equity, or a deliberate size
+    reduction (scale < 1), still skips as before.
+    """
+    if not getattr(cfg, 'lift_to_floor', False) or getattr(cfg, 'sizing_mode', 'risk') != 'notional':
+        return 0
+    if scale < 1.0 or equity * cfg.target_notional_pct >= floor:
+        return 0
+    need = int(math.ceil(floor / entry / lot)) * lot
+    room = min(v for k, v in caps.items() if k != 'target notional')
+    return need if need <= room else 0
