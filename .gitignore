@@ -8,3 +8,4 @@ research_results/
 .env
 # breaker latches and kill switch are local, deliberate human controls
 BREAKER_TRIPPED_*
+.fundamentals_cache.json
