@@ -111,16 +111,27 @@ class SwingEngine:
         report.update({'equity': round(equity, 2), 'cash': round(L.cash, 2), 'regime': regime,
                        'breakers': verdict.reasons, 'size_mult': verdict.size_mult})
 
-        # 4 ── entries ───────────────────────────────────────────────────────
+        # 4 ── edge monitor and entries ──────────────────────────────────────
+        # Kelly on the bot's own net results is reported every run. In notional
+        # mode it does not size trades (that fed a fee death-spiral); when it
+        # turns negative on a real sample it raises a warning for a human to
+        # act on (STOP_TRADING), rather than an automatic state the book could
+        # never trade its way out of.
+        edge = estimate_edge(self.sizing, L.realised_r())
+        report['edge'] = edge.__dict__
+        report['warnings'] = []
+        if edge.n_realised >= self.sizing.edge_warn_min_trades and not edge.edge_positive:
+            report['warnings'].append(
+                f'measured edge negative after {edge.n_realised} trades (Kelly {edge.kelly_full:+.3f}) '
+                f'— review the strategy; create STOP_TRADING to pause entries')
         signals = market.signals(asof) if verdict.entries_allowed else []
         report['signals'] = len(signals)
         if signals:
-            edge = estimate_edge(self.sizing, L.realised_r())
-            report['edge'] = edge.__dict__
             occupied = list(L.positions) + [self._pending_as_position(p) for p in st['pending']]
             cash = self.broker.available_cash(L.cash) - self.book.reserved_for_pending()
             plan = allocate(signals, occupied, self.sizing, equity=equity, cash=cash, edge=edge,
-                            regime_mult=regime['size_mult'], breaker_mult=verdict.size_mult,
+                            regime_mult=regime['size_mult'] if self.sizing.use_regime_size else 1.0,
+                            breaker_mult=verdict.size_mult,
                             max_new=regime['max_new_entries'], sector_of=sector_of,
                             turnover_of=lambda s: market.turnover(s, asof),
                             lot_size_of=self.ticks.lot, product='CNC')

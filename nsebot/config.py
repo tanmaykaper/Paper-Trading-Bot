@@ -91,12 +91,20 @@ class RegimeConfig:
 
 @dataclass
 class SizingConfig:
-    """Fractional Kelly on R-multiples, shrunk toward a measured prior.
+    """Two sizing modes, chosen per sleeve on evidence.
 
-    risk_pct = clip(kelly_fraction x f*, floor, cap) x regime x breaker scalars
-    where f* = p - (1-p)/b is computed from the posterior win rate p and payoff
-    b. The prior is the real-data research result for this exact signal; the
-    bot's own closed trades pull it toward reality as they accumulate.
+    'risk'      fractional Kelly on R-multiples, shrunk toward a measured prior:
+                risk_pct = clip(kelly_fraction x f*, floor, cap) x regime x breaker.
+                Used by intraday (MIS has no flat DP charge, so small sizes are
+                still economic).
+    'notional'  each position is target_notional_pct of equity, capped so its
+                risk never exceeds risk_cap_pct; a trade that cannot reach
+                min_notional_inr is SKIPPED, never shrunk. Used by swing: the
+                full-engine backtest showed Kelly-on-net-R with 3xATR stops
+                shrinking CNC positions to ~₹3k, where the ₹15 DP charge + STT
+                cost ~1%/trade and the feedback loop pinned size at the floor
+                (docs/RESEARCH.md, round 3). Kelly is still computed and reported
+                for swing — as a monitor, not a size input.
     """
     prior_win_rate: float
     prior_payoff: float                      # avg winning R / avg losing R
@@ -110,6 +118,11 @@ class SizingConfig:
     max_adv_participation: float = 0.01      # notional <= 1% of median daily traded value
     max_portfolio_heat_pct: float = 0.12     # sum of open risk across positions
     max_per_sector: int = 2
+    sizing_mode: str = 'risk'                # 'risk' (Kelly) | 'notional'
+    target_notional_pct: float = 0.20        # notional mode: share of equity per position
+    min_notional_inr: float = 0.0            # skip (never shrink) below this; 0 = no floor
+    use_regime_size: bool = True             # let the regime dial scale size (else only entry count)
+    edge_warn_min_trades: int = 60           # warn when realised Kelly < 0 after this many trades
 
 
 @dataclass
@@ -127,9 +140,12 @@ class ExitConfig:
 
 @dataclass
 class BreakerConfig:
-    max_consecutive_losses: int = 3          # halt new entries after this many losses in a row
+    max_consecutive_losses: int = 3          # halt new entries after this many losses in a row (0 = off)
     loss_cooldown_sessions: int = 1          # ...for this many sessions (intraday: rest of day)
-    resume_size_mult: float = 0.5            # then trade at half size until the next winner
+    resume_size_mult: float = 0.5            # then trade at reduced size until the next winner...
+    reduced_max_sessions: int = 5            # ...or this many sessions, whichever comes first — a
+                                             # reduced mode that only a win can clear deadlocks the
+                                             # moment reduced size falls below the economic floor
     daily_loss_limit_pct: float = 0.03       # realised + open P&L today vs sleeve equity
     max_drawdown_pct: float = 0.25           # from peak: halt ALL entries until a human resets
     max_trades_per_day: int = 0              # 0 = no cap
@@ -137,14 +153,16 @@ class BreakerConfig:
 
 
 def swing_sizing():
-    # Prior = the OUT-OF-SAMPLE result of the accepted swing signal (S4b dip
-    # reversion, docs/RESEARCH.md): 64% win, payoff 0.89 -> full Kelly +0.24,
-    # half-Kelly ~12%, so the 3% cap is what binds. The weaker OOS half is
-    # used deliberately — in-sample (70% / Kelly +0.39) is the optimistic one.
+    # Candidate C1 from the backtest attribution (docs/RESEARCH.md, round 3):
+    # 20% of equity per position (~₹10k on ₹50k), skip below ₹8k, risk capped
+    # at 3% of equity, 5 slots, 2 per sector; heat cap = 5 x 3% so the per-trade
+    # cap is what binds. The regime dial limits entry COUNT only. Kelly prior
+    # (S4b out-of-sample: 64% win, payoff 0.89) feeds the edge monitor.
     return SizingConfig(prior_win_rate=0.64, prior_payoff=0.89, kelly_fraction=0.5,
                         risk_floor_pct=0.0075, risk_cap_pct=0.03, max_positions=5,
-                        max_position_pct=0.40, leverage=1.0, max_portfolio_heat_pct=0.12,
-                        max_per_sector=2)
+                        max_position_pct=0.40, leverage=1.0, max_portfolio_heat_pct=0.15,
+                        max_per_sector=2, sizing_mode='notional', target_notional_pct=0.20,
+                        min_notional_inr=8_000.0, use_regime_size=False)
 
 
 def intraday_sizing():
@@ -184,14 +202,20 @@ def intraday_exits():
 
 
 def swing_breakers():
-    return BreakerConfig(max_consecutive_losses=4, loss_cooldown_sessions=3,
-                         daily_loss_limit_pct=0.05, max_drawdown_pct=0.25)
+    # No loss-streak breaker on swing: dip-reversion losses cluster in sell-offs,
+    # immediately before the strongest rebounds, so a streak halt skips the
+    # trades that pay — and its reduced-size mode deadlocked the book in the
+    # backtest. Daily loss limit, 25% drawdown latch and kill switch remain.
+    return BreakerConfig(max_consecutive_losses=0, daily_loss_limit_pct=0.05,
+                         max_drawdown_pct=0.25)
 
 
 def intraday_breakers():
+    # 3 losses: done for the day; the next session trades at half size until a
+    # winner, and reduced size clears on its own after that session regardless.
     return BreakerConfig(max_consecutive_losses=3, loss_cooldown_sessions=1,
                          daily_loss_limit_pct=0.03, max_drawdown_pct=0.25,
-                         max_trades_per_day=6)
+                         max_trades_per_day=6, reduced_max_sessions=2)
 
 
 @dataclass

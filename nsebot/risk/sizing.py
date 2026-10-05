@@ -1,5 +1,10 @@
 """Aggressive, evidence-weighted position sizing.
 
+Two modes (SizingConfig.sizing_mode): 'risk' is the Kelly sizer below, used by
+intraday; 'notional' sizes each position as a fixed share of equity with a
+risk cap and an economic floor, used by swing — see SizingConfig for why.
+The rest of this docstring describes the 'risk' mode.
+
     risk budget  = equity x clip(kelly_fraction x f*, floor, cap)
                           x regime size_mult x breaker size_mult
     shares       = risk budget / risk per share
@@ -90,11 +95,14 @@ def size_position(cfg, *, equity, cash, entry, stop, edge, regime_mult=1.0, brea
     if equity <= 0 or entry <= 0 or risk_ps <= 0:
         return SizeDecision(0, 0.0, 0.0, 0.0, 'invalid', 'non-positive equity, price or stop distance')
 
-    rf = risk_fraction(cfg, edge) * float(regime_mult) * float(breaker_mult)
-    budget = equity * rf
-    caps = {'kelly risk': budget / risk_ps,
-            'buying power': max(cash, 0.0) * cfg.leverage / entry,
-            'concentration': equity * cfg.max_position_pct / entry}
+    scale = float(regime_mult) * float(breaker_mult)
+    if getattr(cfg, 'sizing_mode', 'risk') == 'notional':
+        caps = {'target notional': equity * cfg.target_notional_pct * scale / entry,
+                'risk cap': equity * cfg.risk_cap_pct / risk_ps}
+    else:
+        caps = {'kelly risk': equity * risk_fraction(cfg, edge) * scale / risk_ps}
+    caps.update({'buying power': max(cash, 0.0) * cfg.leverage / entry,
+                 'concentration': equity * cfg.max_position_pct / entry})
     if median_turnover and median_turnover > 0:
         caps['liquidity'] = median_turnover * cfg.max_adv_participation / entry
     if heat_room is not None:
@@ -103,6 +111,13 @@ def size_position(cfg, *, equity, cash, entry, stop, edge, regime_mult=1.0, brea
     binding = min(caps, key=caps.get)
     lot = max(int(lot_size), 1)
     qty = int(math.floor(caps[binding] / lot)) * lot
-    note = '' if edge.edge_positive else f'measured edge negative (Kelly {edge.kelly_full:+.3f}) — floor size'
+    floor = float(getattr(cfg, 'min_notional_inr', 0.0) or 0.0)
+    if qty >= 1 and floor and qty * entry < floor:
+        # Skip, never shrink: below the floor the flat charges eat the edge.
+        return SizeDecision(0, 0.0, 0.0, 0.0, 'below minimum notional',
+                            f'₹{qty * entry:,.0f} < ₹{floor:,.0f} floor (binding: {binding})')
+    note = ''
+    if getattr(cfg, 'sizing_mode', 'risk') == 'risk' and not edge.edge_positive:
+        note = f'measured edge negative (Kelly {edge.kelly_full:+.3f}) — floor size'
     return SizeDecision(qty, round(qty * risk_ps, 2), round(qty * entry, 2),
                         round(qty * risk_ps / equity, 5), binding, note)

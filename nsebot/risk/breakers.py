@@ -6,7 +6,9 @@ to this account — a far better reason to stop:
 
   CONSECUTIVE LOSSES  N losers in a row -> no new entries for the cooldown
                       (intraday: rest of the session; swing: K sessions),
-                      then resume at half size until the next winner.
+                      then reduced size until the next winner OR a session
+                      limit, whichever is first (0 disables the breaker —
+                      swing runs without it, see config.swing_breakers).
   DAILY LOSS LIMIT    today's realised + open P&L below -X% of sleeve equity
                       -> flatten (intraday) and halt until tomorrow.
   MAX DRAWDOWN        sleeve equity X% below its peak -> halt ALL new
@@ -43,7 +45,7 @@ class CircuitBreakers:
         self.cfg = cfg
         self.mode = mode
         self.workdir = workdir
-        self.s = {'consecutive_losses': 0, 'cooldown_left': 0, 'reduced': False,
+        self.s = {'consecutive_losses': 0, 'cooldown_left': 0, 'reduced': False, 'reduced_left': 0,
                   'session': None, 'trades_today': 0, 'realised_today': 0.0,
                   'peak_equity': None, 'halted_for_session': False}
         if state:
@@ -56,6 +58,14 @@ class CircuitBreakers:
             return
         if self.s['session'] is not None and self.s['cooldown_left'] > 0:
             self.s['cooldown_left'] -= 1
+        if self.s['session'] is not None and self.s.get('reduced'):
+            # Reduced size expires on the clock too. Clearing only on a winner
+            # deadlocks the book the moment reduced size drops below the
+            # economic floor: no trade, so no win, so reduced forever.
+            self.s['reduced_left'] = int(self.s.get('reduced_left', 0)) - 1
+            if self.s['reduced_left'] <= 0:
+                self.s['reduced'] = False
+                self.s['reduced_left'] = 0
         self.s.update({'session': session_date, 'trades_today': 0, 'realised_today': 0.0,
                        'halted_for_session': False})
 
@@ -69,12 +79,15 @@ class CircuitBreakers:
             self.s['reduced'] = False
             return
         self.s['consecutive_losses'] += 1
-        if self.s['consecutive_losses'] >= self.cfg.max_consecutive_losses:
+        if self.cfg.max_consecutive_losses and \
+                self.s['consecutive_losses'] >= self.cfg.max_consecutive_losses:
             if self.mode == 'intraday':
                 self.s['halted_for_session'] = True
             else:
                 self.s['cooldown_left'] = self.cfg.loss_cooldown_sessions
             self.s['reduced'] = True
+            self.s['reduced_left'] = int(getattr(self.cfg, 'reduced_max_sessions', 5) or 1) + \
+                (self.cfg.loss_cooldown_sessions if self.mode != 'intraday' else 0)
             self.s['consecutive_losses'] = 0
 
     def mark_equity(self, equity):

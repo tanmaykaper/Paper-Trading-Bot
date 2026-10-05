@@ -55,6 +55,13 @@ def swing_report(rep, initial_cash):
         lines += [f"_{rep['status']}_", '']
     if rep.get('breakers'):
         lines += ['**Breakers:** ' + '; '.join(rep['breakers']), '']
+    e = rep.get('edge')
+    if e:
+        lines += [f"Edge monitor: win {e['win_rate']:.0%} · payoff {e['payoff']:.2f} · Kelly "
+                  f"{e['kelly_full']:+.3f} · {e['n_realised']} own trades "
+                  f"({e['prior_weight']:.0%} prior)", '']
+    for w in rep.get('warnings') or []:
+        lines += [f'⚠️ **{w}**', '']
     lines += ['### Filled'] + _rows(rep.get('filled'), ['symbol', 'qty', 'price'])
     lines += ['', '### Closed'] + _rows(rep.get('closed'), ['symbol', 'reason', 'net ₹', 'net R'])
     lines += ['', '### New plans (fill at next open)'] + _rows(rep.get('placed'),

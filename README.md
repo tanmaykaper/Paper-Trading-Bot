@@ -23,6 +23,14 @@ All numbers below come from the bot's own code run on real NSE data, net of Zero
   - The edge shrank from in-sample (+1.53%) to out-of-sample. Expect that to continue.
 - **Intraday.** No variant has passed yet: all are net-negative after costs on Yahoo's 59-day window. The Kelly sizer therefore trades the 0.5% risk floor. Treat this mode as live data collection until its own trades earn more.
 - **The V2 breakout signal lost money** in both halves of the history (out-of-sample −0.87% per trade) and has been removed from trading.
+- **Full-engine backtest** (₹50k, Jun 2024 to Oct 2026, the real engine end to end):
+  - The first production config lost **−12.7%**.
+  - Attribution traced the loss to three causes:
+    1. Kelly sizing on net results shrank positions to about ₹3k, where the flat DP charge and STT eat about 1% per trade.
+    2. A loss-streak breaker whose reduced-size mode deadlocked.
+    3. A regime size dial that pushed positions below economic size.
+  - The current config (notional sizing with an ₹8k floor, no streak breaker or size dial on swing) returned **+6.7%** with a −18.7% max drawdown. In-sample it lost −7.3%; out-of-sample it made +15.2%.
+  - That config was chosen after seeing the data, so only forward paper trading tests it cleanly. Details are in [`docs/RESEARCH.md`](docs/RESEARCH.md), round 3.
 
 Run `python -m nsebot backtest` (or the `nsebot research` workflow) for the full-engine portfolio backtest on current data.
 
@@ -61,11 +69,12 @@ A session that has already been processed is skipped, so re-runs are safe. Misse
 
 | Control | Swing | Intraday |
 |---|---|---|
-| Sizing | Half-Kelly on net R, shrunk toward the out-of-sample prior | Same |
-| Risk per trade | 0.75% floor to 3% cap (the cap binds) | 0.5% floor (measured edge is negative) to 2% cap |
+| Sizing | **Notional**: 20% of equity per position. A trade that can't reach ₹8k is skipped, never shrunk. | Half-Kelly on net R, shrunk toward the out-of-sample prior |
+| Risk per trade | Capped at 3% of equity. Kelly is monitored and reported, but doesn't set the size. | 0.5% floor (measured edge is negative) to 2% cap |
 | Buying power | Cash × 1 (CNC) | Cash × 5 (MIS margin) |
-| Other caps | 40% of capital per name, ≤1% of the stock's daily traded value, 12% total open risk, 2 per sector | 3 positions, 5% total open risk, 1 per sector |
-| Consecutive-loss breaker | 4 losses: no entries for 3 sessions, then half size until a winner | 3 losses: done for the day, then half size until a winner |
+| Other caps | 5 positions, 2 per sector, 15% total open risk, ≤1% of the stock's daily traded value. The regime dial limits only the number of new entries per day. | 3 positions, 5% total open risk, 1 per sector |
+| Consecutive-loss breaker | **None.** In dip reversion, losses cluster just before the best rebounds. | 3 losses: done for the day. The next session trades at half size until a winner, then reduced size expires anyway. |
+| Edge monitor | Warns when the bot's own Kelly estimate is negative after 60 or more trades | Same |
 | Daily loss limit | 5% | 3%, closes everything |
 | Drawdown latch | 25% from peak: entries stop until a human deletes `BREAKER_TRIPPED_<mode>` | Same |
 | Kill switch | Create a file named `STOP_TRADING` | Same |

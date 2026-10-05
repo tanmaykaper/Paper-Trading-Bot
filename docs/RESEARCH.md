@@ -60,6 +60,39 @@ Momentum rotation crushed the benchmark out-of-sample but lost to it badly in-sa
 
 No intraday edge has been shown. The OOS gross R is slightly positive, but every variant loses after MIS costs, and the samples are far too small to conclude anything either way.
 
+## Round 3: full-engine backtest and attribution (runs 37289944455, 37291050170)
+
+The deployed Phase 4 engine, run end to end on a ₹50k paper book from Jun 2024 to Oct 2026 (574 sessions), returned **−12.7%**. The max drawdown was −14.5%, over 187 trades with a 48% net win rate.
+
+An attribution ladder runs the real `SwingEngine`, adding one deployed difference at a time. Run it with `python -m nsebot.research.attribution`.
+
+| Variant | Trades | Avg notional | Net/trade (all) | Net/trade (OOS) | Book return / max DD |
+|---|---|---|---|---|---|
+| P0 parity: all signals, ₹15k fixed, no slippage / regime / breakers | 468 | ₹14,243 | +0.42% | **+0.74%** | — |
+| P1 + 5 bps slippage and tick snapping | 468 | ₹14,250 | +0.32% | +0.64% | — |
+| P2 + half-Kelly sizing and breakers | 262 | **₹3,051** | −1.05% | −0.40% | −17.2% / −19.1% |
+| P3 + capacity (slots, sector, regime entry budget) | 202 | ₹3,478 | −0.84% | +0.15% | −12.9% / −15.9% |
+| P4 = deployed (+ regime size dial) | 187 | ₹3,167 | −1.00% | −0.22% | −12.7% / −14.5% |
+| P5 deployed, shallowest dip first | 187 | ₹3,048 | −0.90% | −0.32% | −10.5% / −14.5% |
+| **C1: notional 20% of equity, ₹8k floor, 3% risk cap, no streak breaker, no size dial** | **183** | ₹9,115 | **+0.24%** | **+1.02% (t 2.1)** | **+6.7% / −18.7%** |
+| C2 = C1 + loss-streak breaker | 28 | ₹9,274 | −0.29% | none (locked) | −1.6% / −5.4% |
+| C3 = C1 + regime size dial | 47 | ₹8,741 | −1.31% | 4 trades | −11.0% / −14.1% |
+
+What this shows:
+
+1. **The engine is faithful.** At parity it reproduces the event study's out-of-sample result (+0.74% vs +0.69%).
+2. **Position size collapse.**
+   - Kelly sizing on 3×ATR stops, learning from net R, shrank CNC positions to about ₹3k.
+   - At that size the flat DP charge plus STT cost about 1% per trade.
+   - The resulting losses lowered the Kelly estimate, which shrank positions further. Gross P&L was about flat; net was −1%.
+3. **The breaker deadlock.**
+   - "Half size until the next win" sat below the ₹8k economic floor.
+   - No trade could happen, so no win could reset it, and C2 never traded again.
+   - Even without a floor, the streak breaker skips the rebound trades a dip-reversion strategy earns its money on.
+4. **The regime size dial** pushed positions below economic size in weak markets. That is V2's regime gate by another route.
+
+Phase 4b deploys C1. `tests/test_attribution.py` proves the deployed engine places exactly C1's trades. C1 was selected after seeing this data, so its +6.7% is in-sample by construction. The deeper drawdown than Nifty (−18.7% vs −14.5%) and the IS loss (−7.3%) are part of the result, not footnotes.
+
 ## What the evidence supports
 
 1. **Swing: trade S4b dip reversion.** The story is consistent across the board:
@@ -72,3 +105,5 @@ No intraday edge has been shown. The OOS gross R is slightly positive, but every
    - Frequency is about 0.5 signals per session across 255 names.
 3. **Intraday: run at the sizing floor** as live data collection. The bot's own trades move the Kelly estimate; aggressive sizing has to be earned first.
 4. **Kelly priors use the OOS numbers** (the weaker half), never the IS numbers.
+5. **Swing sizes by notional with an economic floor, not by Kelly** (round 3). Kelly on the bot's own results is reported every run and raises a warning when negative on 60+ trades. It never becomes an automatic state the book can't trade its way out of.
+6. **Honest expectation for swing:** small, regime-dependent, and probably positive. Forward paper trading is the real test.

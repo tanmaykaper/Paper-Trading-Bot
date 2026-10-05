@@ -10,6 +10,13 @@ from nsebot.config import (BreakerConfig, ExitConfig, intraday_breakers, intrada
 from nsebot.risk import (CircuitBreakers, Position, advance, allocate, estimate_edge, evaluate,
                          open_risk, risk_fraction, size_position)
 from nsebot.signals import Signal
+import dataclasses
+
+
+def _risk_cfg():
+    """The Kelly ('risk') sizer with swing-like caps — swing itself now sizes by notional."""
+    return dataclasses.replace(swing_sizing(), sizing_mode='risk', min_notional_inr=0.0,
+                               max_portfolio_heat_pct=0.12)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -24,7 +31,7 @@ def test_edge_is_the_prior_until_trades_arrive():
 
 
 def test_realised_losers_drag_kelly_negative_and_size_to_floor():
-    cfg = swing_sizing()
+    cfg = _risk_cfg()
     e = estimate_edge(cfg, [-1.0] * 150 + [0.8] * 50)
     assert e.kelly_full < 0 and e.prior_weight < 0.25
     assert risk_fraction(cfg, e) == cfg.risk_floor_pct
@@ -44,7 +51,7 @@ def _edge(cfg, kelly_full=0.10):
 
 
 def test_kelly_risk_binds_with_ample_cash():
-    cfg = swing_sizing()
+    cfg = _risk_cfg()
     d = size_position(cfg, equity=100_000, cash=100_000, entry=1000, stop=950, edge=_edge(cfg))
     # half of 0.10 = 5% capped at 3% -> ₹3,000 at ₹50/share = 60 shares, but 40%
     # concentration allows only 40 shares of a ₹1,000 stock.
@@ -52,7 +59,7 @@ def test_kelly_risk_binds_with_ample_cash():
 
 
 def test_buying_power_binds_and_mis_leverage_lifts_it():
-    cash_only = size_position(swing_sizing(), equity=50_000, cash=5_000, entry=1000, stop=980,
+    cash_only = size_position(_risk_cfg(), equity=50_000, cash=5_000, entry=1000, stop=980,
                               edge=_edge(None))
     assert cash_only.binding == 'buying power' and cash_only.qty == 5
     mis = size_position(intraday_sizing(), equity=50_000, cash=5_000, entry=1000, stop=995,
@@ -61,7 +68,7 @@ def test_buying_power_binds_and_mis_leverage_lifts_it():
 
 
 def test_liquidity_and_heat_caps():
-    cfg = swing_sizing()
+    cfg = _risk_cfg()
     d = size_position(cfg, equity=1_000_000, cash=1_000_000, entry=100, stop=95, edge=_edge(cfg),
                       median_turnover=1_00_000)                  # ₹1 lakh/day traded
     assert d.binding == 'liquidity' and d.qty == 10
@@ -71,13 +78,13 @@ def test_liquidity_and_heat_caps():
 
 
 def test_lot_size_rounds_down():
-    d = size_position(swing_sizing(), equity=100_000, cash=100_000, entry=100, stop=90,
+    d = size_position(_risk_cfg(), equity=100_000, cash=100_000, entry=100, stop=90,
                       edge=_edge(None), lot_size=75)
     assert d.qty % 75 == 0
 
 
 def test_regime_and_breaker_scale_risk():
-    cfg = swing_sizing()
+    cfg = _risk_cfg()
     full = size_position(cfg, equity=100_000, cash=100_000, entry=100, stop=90, edge=_edge(cfg))
     half = size_position(cfg, equity=100_000, cash=100_000, entry=100, stop=90, edge=_edge(cfg),
                          regime_mult=0.5)
@@ -178,8 +185,18 @@ def test_intraday_loss_streak_halts_session_then_resumes_at_half_size(tmp_path):
     assert b.check(equity=100_000).size_mult == 1.0
 
 
-def test_swing_cooldown_counts_sessions(tmp_path):
+def test_swing_preset_has_no_loss_streak_breaker(tmp_path):
     b = CircuitBreakers(swing_breakers(), 'swing', workdir=str(tmp_path))
+    b.start_session('d1')
+    for _ in range(20):
+        b.on_exit(-1)
+    v = b.check(100_000)
+    assert v.entries_allowed and v.size_mult == 1.0
+
+
+def test_streak_cooldown_counts_sessions(tmp_path):
+    cfg = BreakerConfig(max_consecutive_losses=4, loss_cooldown_sessions=3)
+    b = CircuitBreakers(cfg, 'swing', workdir=str(tmp_path))
     b.start_session('d1')
     for _ in range(4):
         b.on_exit(-1)
@@ -252,3 +269,49 @@ def test_allocator_respects_slots_sectors_held_and_budget():
 def test_open_risk_is_zero_once_stop_locks_profit():
     p = Position('X', 'swing', 'LONG', 10, 100, 95, 102, pd.Timestamp('2026-10-01'), 2.0)
     assert open_risk(p) == 0.0
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Phase 4b: notional sizing and the breaker deadlock
+# ═════════════════════════════════════════════════════════════════════════════
+def test_notional_sizing_targets_a_fifth_of_equity():
+    d = size_position(swing_sizing(), equity=50_000, cash=50_000, entry=500, stop=470,
+                      edge=_edge(None))
+    assert d.binding == 'target notional' and d.qty == 20 and d.notional == 10_000
+
+
+def test_notional_sizing_caps_risk_for_wide_stops():
+    # ₹20k (20% of ₹100k) at a 20% stop would risk ₹4,000 = 4% > the 3% cap
+    # -> ₹3,000 / ₹100 per share = 30 shares = ₹15k, still above the ₹8k floor.
+    d = size_position(swing_sizing(), equity=100_000, cash=100_000, entry=500, stop=400,
+                      edge=_edge(None))
+    assert d.binding == 'risk cap' and d.qty == 30 and d.notional == 15_000
+
+
+def test_below_the_floor_is_skipped_not_shrunk():
+    d = size_position(swing_sizing(), equity=50_000, cash=6_000, entry=500, stop=470,
+                      edge=_edge(None))
+    assert not d.ok and d.binding == 'below minimum notional'
+
+
+def test_notional_mode_ignores_a_negative_kelly_for_size():
+    cfg = swing_sizing()
+    bad = estimate_edge(cfg, [-1.0] * 200)
+    d = size_position(cfg, equity=50_000, cash=50_000, entry=500, stop=470, edge=bad)
+    assert d.notional == 10_000                         # no fee death-spiral from Kelly
+
+
+def test_reduced_mode_expires_without_a_win(tmp_path):
+    """The deadlock the backtest found: reduced size below the economic floor
+    means no trades, so no winner can ever clear it. It must expire on the clock."""
+    cfg = BreakerConfig(max_consecutive_losses=2, loss_cooldown_sessions=1, reduced_max_sessions=3)
+    b = CircuitBreakers(cfg, 'swing', workdir=str(tmp_path))
+    b.start_session('d0')
+    b.on_exit(-1)
+    b.on_exit(-1)
+    mults = []
+    for d in ('d1', 'd2', 'd3', 'd4', 'd5'):
+        b.start_session(d)
+        mults.append(b.check(100_000).size_mult)
+    assert mults[-1] == 1.0 and 0.5 in mults
