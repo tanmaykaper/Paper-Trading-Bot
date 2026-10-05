@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       study:
-        description: 'backtest | phase5 | phase5_diag | phase5b | hurdle | attribution | experiments | event_study'
+        description: 'backtest | phase5 | phase5_diag | phase5b | symbol_check | hurdle | attribution | experiments | event_study'
         default: 'backtest'
 
 permissions:
@@ -65,7 +65,7 @@ jobs:
         run: |
           case "$STUDY" in
             backtest) python -m nsebot backtest --out research_results ;;
-            phase5|phase5_diag|phase5b|hurdle|attribution|experiments|event_study) python -m "nsebot.research.$STUDY" --out research_results ;;
+            phase5|phase5_diag|phase5b|symbol_check|hurdle|attribution|experiments|event_study) python -m "nsebot.research.$STUDY" --out research_results ;;
             *) echo "unknown study: $STUDY" && exit 1 ;;
           esac
       - uses: actions/upload-artifact@v4
