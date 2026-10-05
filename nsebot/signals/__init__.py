@@ -38,5 +38,6 @@ class Signal:
 
 from .swing import SwingSignalEngine          # noqa: E402
 from .intraday import IntradaySignalEngine    # noqa: E402
+from .reversion import ReversionSignalEngine  # noqa: E402
 
-__all__ = ['Signal', 'SwingSignalEngine', 'IntradaySignalEngine']
+__all__ = ['Signal', 'SwingSignalEngine', 'IntradaySignalEngine', 'ReversionSignalEngine']

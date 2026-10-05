@@ -36,6 +36,27 @@ class SwingSignalConfig:
 
 
 @dataclass
+class ReversionSignalConfig:
+    """CNC short-term mean reversion inside a long-term uptrend.
+
+    The only variant that passed the pre-registered out-of-sample test
+    (docs/RESEARCH.md, S4b): IS +1.53%/trade (t 6.5, n 597), OOS +0.69%/trade
+    (t 1.8, n 168), net of Zerodha CNC costs. Every number below is the
+    value that was tested; changing one invalidates that evidence.
+    """
+    min_bars: int = 200
+    min_price: float = 50.0
+    min_turnover_inr: float = 5.0e7          # ₹5 cr median daily value
+    trend_ema: int = 200                     # long-term uptrend: close above EMA-200
+    drop_lookback: int = 3                   # ...that has just fallen
+    drop_pct: float = 0.08                   # ...8% or more in 3 sessions
+    atr_period: int = 14
+    stop_atr_mult: float = 3.0               # wide stop: reversion needs room to work
+    exit_ema: int = 5                        # take the bounce: first close above EMA-5
+    max_hold_bars: int = 7
+
+
+@dataclass
 class IntradaySignalConfig:
     """MIS opening-range breakout, confirmed by VWAP and volume. Long and short."""
     interval_minutes: int = 5
@@ -71,6 +92,7 @@ class RegimeConfig:
 @dataclass
 class BotConfig:
     swing: SwingSignalConfig = field(default_factory=SwingSignalConfig)
+    reversion: ReversionSignalConfig = field(default_factory=ReversionSignalConfig)
     intraday: IntradaySignalConfig = field(default_factory=IntradaySignalConfig)
     regime: RegimeConfig = field(default_factory=RegimeConfig)
 
