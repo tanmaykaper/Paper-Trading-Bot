@@ -1,0 +1,23 @@
+{
+ "mode": "swing",
+ "initial_cash": 50000.0,
+ "cash": 50000.0,
+ "positions": [],
+ "pending": [],
+ "breakers": {
+  "consecutive_losses": 0,
+  "cooldown_left": 0,
+  "reduced": false,
+  "reduced_left": 0,
+  "session": "2026-10-05",
+  "trades_today": 0,
+  "realised_today": 0.0,
+  "peak_equity": 50000.0,
+  "halted_for_session": false,
+  "latched": false
+ },
+ "last_processed": "2026-10-05",
+ "traded_today": [],
+ "trade_seq": 0,
+ "starved_sessions": 1
+}
