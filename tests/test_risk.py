@@ -229,6 +229,42 @@ def test_drawdown_latch_requires_a_human(tmp_path):
     assert b.check(equity=99_000).entries_allowed
 
 
+def test_a_live_latch_survives_a_fresh_checkout_and_a_human_reset_restarts_the_drawdown(tmp_path):
+    """On GitHub Actions every run is a fresh checkout: a latch written to the
+    repo root (gitignored) vanished, so trading resumed by itself once equity
+    recovered. Live runs now keep it with the sleeve's committed state."""
+    state_dir = tmp_path / 'state' / 'swing'
+    b = CircuitBreakers(swing_breakers(), 'swing', workdir=str(tmp_path), latch_dir=str(state_dir))
+    b.start_session('2026-01-05')
+    b.check(100_000)
+    b.start_session('2026-01-06')
+    assert not b.check(70_000).entries_allowed
+    latch = state_dir / 'BREAKER_TRIPPED_swing'
+    assert latch.exists() and not (tmp_path / 'BREAKER_TRIPPED_swing').exists()
+    # Next run: state.json and the committed latch come back. Recovery alone does not release it.
+    b2 = CircuitBreakers(swing_breakers(), 'swing', state=b.state(), workdir=str(tmp_path),
+                         latch_dir=str(state_dir))
+    b2.start_session('2026-01-07')
+    assert not b2.check(80_000).entries_allowed
+    # A human deletes the latch: trading resumes and drawdown restarts from that day's equity,
+    # so it does not trip again at once.
+    latch.unlink()
+    b2.start_session('2026-01-08')
+    assert b2.check(72_000).entries_allowed and b2.state()['peak_equity'] == 72_000
+    assert not latch.exists() and not b2.state()['latched']
+
+
+def test_engines_pass_the_latch_directory_through(tmp_path):
+    from nsebot.broker.paper import PaperBroker
+    from nsebot.config import BotConfig
+    from nsebot.engine import IntradayEngine, MomentumEngine, SwingEngine
+    from nsebot.ledger import Ledger
+    for cls, mode in ((SwingEngine, 'swing'), (IntradayEngine, 'intraday'), (MomentumEngine, 'momentum')):
+        L = Ledger(str(tmp_path), mode, 50_000)
+        eng = cls(BotConfig(), PaperBroker(), L, workdir=str(tmp_path), log=lambda m: None, latch_dir=L.dir)
+        assert eng.breakers.latch_dir == L.dir and eng.breakers.workdir == str(tmp_path)
+
+
 def test_drawdown_latch_is_stamped_with_the_session_date(tmp_path):
     b = CircuitBreakers(swing_breakers(), 'swing', workdir=str(tmp_path))
     b.start_session('2020-03-06')

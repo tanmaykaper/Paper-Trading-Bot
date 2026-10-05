@@ -40,12 +40,13 @@ STARVED_ALERT_SESSIONS = 3          # signals + free slots + nothing opened, thi
 class SwingEngine:
     mode = 'swing'
 
-    def __init__(self, cfg, broker, ledger, workdir='.', log=None):
+    def __init__(self, cfg, broker, ledger, workdir='.', log=None, latch_dir=None):
         self.cfg = cfg
         self.sizing, self.exits = cfg.swing_sizing, cfg.swing_exits
         self.broker, self.L = broker, ledger
         self.breakers = CircuitBreakers(cfg.swing_breakers, self.mode,
-                                        state=ledger.state.get('breakers'), workdir=workdir)
+                                        state=ledger.state.get('breakers'), workdir=workdir,
+                                        latch_dir=latch_dir)
         self.log = log or logger.info
         self.book = Book(ledger, broker, self.breakers, self.mode, self.sizing.leverage, self.log)
         self.ticks = getattr(broker, 'ticks', None) or TickTable()

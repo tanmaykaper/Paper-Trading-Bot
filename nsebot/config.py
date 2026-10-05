@@ -57,6 +57,30 @@ class ReversionSignalConfig:
 
 
 @dataclass
+class MomentumConfig:
+    """CNC cross-sectional momentum over every NSE-listed stock: design B4.
+
+    The only design to pass the pre-registered test on a symbol list without
+    hindsight (docs/RESEARCH.md, round 6): untouched Jul 2018 – Jul 2023
+    +22.6% CAGR against +21.7% for the median smallcap fund; Jul 2018 – Oct
+    2026 +30.2% against +24.5% for the best; worst drawdown 52.8%. Every
+    number below is the value tested; changing one invalidates that evidence.
+    """
+    top_n: int = 10                          # equal-weight slots
+    band_mult: int = 3                       # keep a holding until it leaves the top band_mult x top_n
+    rebalance_every: int = 5                 # sessions between rebalances
+    lookback: int = 252                      # 12-1 momentum: close `skip` sessions ago over close
+    skip: int = 21                           # ...`lookback` sessions ago, minus one
+    min_turnover_inr: float = 5.0e7          # 20-session median traded value, on the decision date
+    turnover_window: int = 20
+    min_price: float = 50.0
+    min_history_bars: int = 60               # shorter histories are ignored entirely (as tested)
+    series: tuple = ('EQ', 'BE', 'BZ')       # NSE main board; SME platforms (SM, ST) excluded
+    min_resolved: float = 0.70               # share of listed symbols that must return data to rebalance
+    list_max_age_days: int = 30              # use the cached NSE list for at most this long
+
+
+@dataclass
 class IntradaySignalConfig:
     """MIS opening-range breakout, confirmed by VWAP and volume. Long and short."""
     interval_minutes: int = 5
@@ -149,7 +173,7 @@ class BreakerConfig:
     reduced_max_sessions: int = 5            # ...or this many sessions, whichever comes first — a
                                              # reduced mode that only a win can clear deadlocks the
                                              # moment reduced size falls below the economic floor
-    daily_loss_limit_pct: float = 0.03       # realised + open P&L today vs sleeve equity
+    daily_loss_limit_pct: float = 0.03       # realised + open P&L today vs sleeve equity (0 = off)
     max_drawdown_pct: float = 0.25           # from peak: halt ALL entries until a human resets
     max_trades_per_day: int = 0              # 0 = no cap
     kill_switch_file: str = 'STOP_TRADING'
@@ -215,6 +239,17 @@ def swing_breakers():
                          max_drawdown_pct=0.25)
 
 
+def momentum_breakers():
+    # B4's worst backtested fall was 52.8% (2018-26), deeper than any fund's.
+    # The 25% latch the dip sleeve uses would halt it in an ordinary bad year,
+    # so this sleeve gets its own at 55% — beyond anything it has done, as a
+    # checkpoint for a human. No loss-streak breaker, daily loss limit or
+    # trade cap: none was in the tested rules, and a weekly list does not
+    # need them.
+    return BreakerConfig(max_consecutive_losses=0, daily_loss_limit_pct=0.0,
+                         max_drawdown_pct=0.55, max_trades_per_day=0)
+
+
 def intraday_breakers():
     # 3 losses: done for the day; the next session trades at half size until a
     # winner, and reduced size clears on its own after that session regardless.
@@ -227,6 +262,7 @@ def intraday_breakers():
 class BotConfig:
     swing: SwingSignalConfig = field(default_factory=SwingSignalConfig)
     reversion: ReversionSignalConfig = field(default_factory=ReversionSignalConfig)
+    momentum: MomentumConfig = field(default_factory=MomentumConfig)
     intraday: IntradaySignalConfig = field(default_factory=IntradaySignalConfig)
     regime: RegimeConfig = field(default_factory=RegimeConfig)
     swing_sizing: SizingConfig = field(default_factory=swing_sizing)
@@ -235,6 +271,7 @@ class BotConfig:
     intraday_exits: ExitConfig = field(default_factory=intraday_exits)
     swing_breakers: BreakerConfig = field(default_factory=swing_breakers)
     intraday_breakers: BreakerConfig = field(default_factory=intraday_breakers)
+    momentum_breakers: BreakerConfig = field(default_factory=momentum_breakers)
 
     def to_dict(self):
         return asdict(self)

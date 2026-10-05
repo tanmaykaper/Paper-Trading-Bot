@@ -1,30 +1,31 @@
-# .github/workflows/main.yml — nsebot SWING (CNC) end-of-day cycle
+# .github/workflows/momentum.yml — nsebot MOMENTUM (CNC) sleeve, paper
 #
-# Runs after the NSE close on weekdays: fills yesterday's plans at today's
-# open, walks every open position through today's bar (stop / EMA-5 target /
-# 7-session time stop), checks the circuit breakers, and plans tomorrow's
-# entries. Then commits state/ back to the repo — the persistence step V2
-# never had for its own pending book (docs/AUTOPSY_V2.md §2).
+# Runs after the swing cycle on weekdays. Fills the last rebalance's orders at
+# today's open, marks the book to today's closes, and every 5 sessions ranks
+# every NSE-listed stock by 12-1 momentum (docs/RESEARCH.md, round 6) and
+# queues the next open's sales and buys. Rebalance days download NSE's equity
+# list and ~2,600 symbols from Yahoo (a few minutes); other days fetch only
+# the holdings. Commits state/momentum/ — ledger, journals and the saved NSE
+# list the next run falls back on if NSE is unreachable.
 #
-# Free: Yahoo daily bars, paper broker. Optional email via the existing
-# EMAIL_SENDER / EMAIL_PASSWORD / EMAIL_RECIPIENT secrets.
+# Free: Yahoo daily bars, NSE's public equity list, paper broker.
 # Re-runs are safe: a session already processed is skipped.
 
-name: NSE Paper Trading Bot
+name: nsebot momentum
 
 on:
   schedule:
-    - cron: '45 11 * * 1-5'      # 17:15 IST, Mon-Fri (NSE closes 15:30; Yahoo settles by then)
+    - cron: '10 12 * * 1-5'      # 17:40 IST, Mon-Fri — after the 17:15 swing run
   workflow_dispatch:
 
 concurrency:
-  group: nsebot-state            # shared with intraday.yml and momentum.yml: one writer of state/
+  group: nsebot-state            # shared with main.yml and intraday.yml: one writer of state/
   cancel-in-progress: false
 
 jobs:
-  swing:
+  momentum:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: write
     steps:
@@ -37,13 +38,12 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Swing end-of-day cycle
+      - name: Momentum end-of-day cycle
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
-          NSEBOT_BROKER: paper
-        run: python -m nsebot swing
+        run: python -m nsebot momentum
       - name: Commit state
         if: always()
         run: |
@@ -54,7 +54,7 @@ jobs:
             echo "state unchanged"
             exit 0
           fi
-          git commit -m "📊 swing EOD $(TZ=Asia/Kolkata date +'%Y-%m-%d') [skip ci]"
+          git commit -m "📈 momentum EOD $(TZ=Asia/Kolkata date +'%Y-%m-%d') [skip ci]"
           for i in 1 2 3 4; do
             git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
             sleep $((i * 5))
