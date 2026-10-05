@@ -90,11 +90,122 @@ class RegimeConfig:
 
 
 @dataclass
+class SizingConfig:
+    """Fractional Kelly on R-multiples, shrunk toward a measured prior.
+
+    risk_pct = clip(kelly_fraction x f*, floor, cap) x regime x breaker scalars
+    where f* = p - (1-p)/b is computed from the posterior win rate p and payoff
+    b. The prior is the real-data research result for this exact signal; the
+    bot's own closed trades pull it toward reality as they accumulate.
+    """
+    prior_win_rate: float
+    prior_payoff: float                      # avg winning R / avg losing R
+    prior_strength: int = 40                 # prior counts as this many trades
+    kelly_fraction: float = 0.5              # half-Kelly: ~75% of full-Kelly growth, far less ruin
+    risk_floor_pct: float = 0.005            # never risk less than this while trading at all
+    risk_cap_pct: float = 0.03               # never more than this on one idea
+    max_positions: int = 5
+    max_position_pct: float = 0.40           # notional cap per name, share of sleeve equity
+    leverage: float = 1.0                    # buying power multiple (MIS margin)
+    max_adv_participation: float = 0.01      # notional <= 1% of median daily traded value
+    max_portfolio_heat_pct: float = 0.12     # sum of open risk across positions
+    max_per_sector: int = 2
+
+
+@dataclass
+class ExitConfig:
+    breakeven_at_r: float = 1.0              # move stop to entry (+costs) once +1R
+    trail_atr_mult: float = 3.0              # chandelier distance from the best price since entry
+    trail_tight_after_r: float = 3.0         # ...tightened once the trade is this far in profit
+    trail_tight_atr_mult: float = 2.0
+    stagnation_bars: int = 0                 # exit if still below stagnation_min_r after N bars (0 = off)
+    stagnation_min_r: float = 0.5
+    max_hold_bars: int = 0                   # hard time stop (0 = off)
+    exit_above_ema: int = 0                  # mean-reversion target: first close above EMA-n (0 = off)
+    square_off: time = None                  # MIS: flatten at this time, no exceptions
+
+
+@dataclass
+class BreakerConfig:
+    max_consecutive_losses: int = 3          # halt new entries after this many losses in a row
+    loss_cooldown_sessions: int = 1          # ...for this many sessions (intraday: rest of day)
+    resume_size_mult: float = 0.5            # then trade at half size until the next winner
+    daily_loss_limit_pct: float = 0.03       # realised + open P&L today vs sleeve equity
+    max_drawdown_pct: float = 0.25           # from peak: halt ALL entries until a human resets
+    max_trades_per_day: int = 0              # 0 = no cap
+    kill_switch_file: str = 'STOP_TRADING'
+
+
+def swing_sizing():
+    # Prior = the OUT-OF-SAMPLE result of the accepted swing signal (S4b dip
+    # reversion, docs/RESEARCH.md): 64% win, payoff 0.89 -> full Kelly +0.24,
+    # half-Kelly ~12%, so the 3% cap is what binds. The weaker OOS half is
+    # used deliberately — in-sample (70% / Kelly +0.39) is the optimistic one.
+    return SizingConfig(prior_win_rate=0.64, prior_payoff=0.89, kelly_fraction=0.5,
+                        risk_floor_pct=0.0075, risk_cap_pct=0.03, max_positions=5,
+                        max_position_pct=0.40, leverage=1.0, max_portfolio_heat_pct=0.12,
+                        max_per_sector=2)
+
+
+def intraday_sizing():
+    # Zerodha MIS on NSE equity: up to 5x intraday leverage (20% margin) on
+    # most liquid names. The cap stack below decides how much of it is used.
+    # No intraday variant passed out-of-sample (all net-negative after MIS
+    # costs, n <= 31 on Yahoo's 59-day window), so the prior is set to that
+    # measurement: Kelly < 0 -> the sizer trades the floor until the bot's
+    # own trades prove an edge. Aggression is earned, not assumed.
+    return SizingConfig(prior_win_rate=0.45, prior_payoff=1.10, kelly_fraction=0.5,
+                        risk_floor_pct=0.005, risk_cap_pct=0.02, max_positions=3,
+                        max_position_pct=2.50, leverage=5.0, max_portfolio_heat_pct=0.05,
+                        max_per_sector=1, max_adv_participation=0.005)
+
+
+def swing_exits():
+    # Exactly the exit the accepted S4b variant was tested with: stop at
+    # 3 x ATR, first close above EMA-5, or 7 sessions. No trail, no
+    # breakeven — a reversion trade rarely reaches +1R before its target, and
+    # a trail the research never ran would be an untested change.
+    return ExitConfig(breakeven_at_r=1e9, trail_atr_mult=3.0, trail_tight_after_r=1e9,
+                      trail_tight_atr_mult=2.0, stagnation_bars=0, max_hold_bars=7,
+                      exit_above_ema=5)
+
+
+def momentum_exits():
+    # Trend-following exits (chandelier trail, stagnation, 40-bar cap). Kept for
+    # momentum research variants; not used by the live swing strategy.
+    return ExitConfig(breakeven_at_r=1.0, trail_atr_mult=3.0, trail_tight_after_r=3.0,
+                      trail_tight_atr_mult=2.0, stagnation_bars=10, stagnation_min_r=0.5,
+                      max_hold_bars=40)
+
+
+def intraday_exits():
+    return ExitConfig(breakeven_at_r=1.0, trail_atr_mult=2.0, trail_tight_after_r=2.0,
+                      trail_tight_atr_mult=1.2, square_off=time(15, 10))
+
+
+def swing_breakers():
+    return BreakerConfig(max_consecutive_losses=4, loss_cooldown_sessions=3,
+                         daily_loss_limit_pct=0.05, max_drawdown_pct=0.25)
+
+
+def intraday_breakers():
+    return BreakerConfig(max_consecutive_losses=3, loss_cooldown_sessions=1,
+                         daily_loss_limit_pct=0.03, max_drawdown_pct=0.25,
+                         max_trades_per_day=6)
+
+
+@dataclass
 class BotConfig:
     swing: SwingSignalConfig = field(default_factory=SwingSignalConfig)
     reversion: ReversionSignalConfig = field(default_factory=ReversionSignalConfig)
     intraday: IntradaySignalConfig = field(default_factory=IntradaySignalConfig)
     regime: RegimeConfig = field(default_factory=RegimeConfig)
+    swing_sizing: SizingConfig = field(default_factory=swing_sizing)
+    intraday_sizing: SizingConfig = field(default_factory=intraday_sizing)
+    swing_exits: ExitConfig = field(default_factory=swing_exits)
+    intraday_exits: ExitConfig = field(default_factory=intraday_exits)
+    swing_breakers: BreakerConfig = field(default_factory=swing_breakers)
+    intraday_breakers: BreakerConfig = field(default_factory=intraday_breakers)
 
     def to_dict(self):
         return asdict(self)
