@@ -10,19 +10,22 @@
 # EMAIL_SENDER / EMAIL_PASSWORD / EMAIL_RECIPIENT secrets.
 # Re-runs are safe: a session already processed is skipped.
 #
-# GitHub's scheduler runs this repo's jobs hours late and now and then drops
-# one (docs/SCHEDULING.md), so the cycle is scheduled four times. The first
-# run that gets through processes the session; the rest find nothing to do.
-# A run before 15:45 IST the next day still processes the previous session.
+# GitHub's scheduler runs this repo's jobs hours late and drops some
+# (docs/SCHEDULING.md), so the cycle is scheduled every hour through the
+# night. The first step checks state/swing/ and stops within seconds when the
+# session is already processed; the first slot that gets through does the
+# work. A run before 15:45 IST the next day processes the previous session.
 
 name: NSE Paper Trading Bot
 
 on:
   schedule:
-    - cron: '45 11 * * 1-5'      # 17:15 IST, Mon-Fri (NSE closes 15:30; Yahoo settles by then)
-    - cron: '15 14 * * 1-5'      # 19:45 IST  backup
-    - cron: '15 17 * * 1-5'      # 22:45 IST  backup
-    - cron: '15 1 * * 2-6'       # 06:45 IST next morning, before the open  backup
+    # GitHub runs scheduled jobs late and drops some, worst at the top of the hour, so the
+    # cycle is offered hourly at :43 from 17:13 IST through the night and twice before the
+    # next open. The gate step makes every slot after the first successful one a ~10 s no-op.
+    - cron: '43 11-18 * * 1-5'   # 17:13, 18:13 ... 00:13 IST
+    - cron: '43 20,22 * * 1-5'   # 02:13, 04:13 IST
+    - cron: '43 0,2 * * 2-6'     # 06:13, 08:13 IST next morning, before the open
   workflow_dispatch:
 
 concurrency:
@@ -37,15 +40,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Anything to do?             # seconds; skips the rest when the work is already done
+        id: gate
+        run: python3 scripts/should_run.py swing
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
         with:
           python-version: '3.11'
           cache: 'pip'
       - name: Install
+        if: steps.gate.outputs.run == 'true'
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
       - name: Swing end-of-day cycle
+        if: steps.gate.outputs.run == 'true'
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
@@ -53,7 +62,7 @@ jobs:
           NSEBOT_BROKER: paper
         run: python -m nsebot swing
       - name: Commit state
-        if: always()
+        if: always() && steps.gate.outputs.run == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

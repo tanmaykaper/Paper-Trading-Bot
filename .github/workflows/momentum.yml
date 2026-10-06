@@ -9,18 +9,22 @@
 # list the next run falls back on if NSE is unreachable.
 #
 # Free: Yahoo daily bars, NSE's public equity list, paper broker.
-# Re-runs are safe: a session already processed is skipped, before any
-# download, so the three backup slots cost seconds when the main run got
-# through (GitHub runs schedules late and drops some: docs/SCHEDULING.md).
+#
+# GitHub's scheduler runs this repo's jobs hours late and drops some
+# (docs/SCHEDULING.md), so the cycle is scheduled every hour through the
+# night. The first step checks state/momentum/ and stops within seconds when
+# the session is already processed; the first slot that gets through does the
+# work.
 
 name: nsebot momentum
 
 on:
   schedule:
-    - cron: '10 12 * * 1-5'      # 17:40 IST, Mon-Fri — after the 17:15 swing run
-    - cron: '40 14 * * 1-5'      # 20:10 IST  backup
-    - cron: '40 17 * * 1-5'      # 23:10 IST  backup
-    - cron: '40 1 * * 2-6'       # 07:10 IST next morning, before the open  backup
+    # Same reasoning as main.yml: hourly at :07 from 17:37 IST through the night, twice
+    # before the next open; the gate step makes every slot after the first a ~10 s no-op.
+    - cron: '7 12-19 * * 1-5'    # 17:37, 18:37 ... 00:37 IST
+    - cron: '7 21,23 * * 1-5'    # 02:37, 04:37 IST
+    - cron: '7 1,3 * * 2-6'      # 06:37, 08:37 IST next morning, before the open
   workflow_dispatch:
 
 concurrency:
@@ -35,22 +39,28 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Anything to do?             # seconds; skips the rest when the work is already done
+        id: gate
+        run: python3 scripts/should_run.py momentum
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
         with:
           python-version: '3.11'
           cache: 'pip'
       - name: Install
+        if: steps.gate.outputs.run == 'true'
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
       - name: Momentum end-of-day cycle
+        if: steps.gate.outputs.run == 'true'
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
         run: python -m nsebot momentum
       - name: Commit state
-        if: always()
+        if: always() && steps.gate.outputs.run == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
