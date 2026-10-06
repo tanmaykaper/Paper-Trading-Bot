@@ -1,0 +1,11 @@
+{
+ "mode": "intraday",
+ "initial_cash": 50000.0,
+ "cash": 50000.0,
+ "positions": [],
+ "pending": [],
+ "breakers": {},
+ "last_processed": null,
+ "traded_today": [],
+ "trade_seq": 0
+}
