@@ -123,7 +123,8 @@ Environment variables (all optional):
 | `EMAIL_SENDER`, `EMAIL_PASSWORD`, `EMAIL_RECIPIENT` | — | Daily report and alert emails (Gmail app password) |
 
 **GitHub Actions:**
-- `main.yml` runs the swing cycle, `intraday.yml` the intraday session and `momentum.yml` the momentum sleeve. All three commit `state/` and share a concurrency group, so only one writes state at a time.
+- `main.yml` runs the swing cycle, `intraday.yml` the intraday session and `momentum.yml` the momentum sleeve. Each commits its own `state/<mode>/` folder and has its own queue.
+- GitHub runs this repo's schedules hours late and sometimes drops one. Swing and momentum each have three backup runs that do nothing once the day is processed. Intraday needs a free external trigger to start on time: see [`docs/SCHEDULING.md`](docs/SCHEDULING.md).
 - On rebalance days `momentum.yml` downloads NSE's equity list (saved to `state/momentum/` as a fallback for up to 30 days) and about 2,600 symbols from Yahoo, which takes a few minutes. Other days it fetches only the holdings.
 - Scheduled workflows only run from the **default branch**, so this code must be merged into `main` to go live.
 - `research.yml` runs the tests and the backtest or experiments on `claude/**` branches.

@@ -43,3 +43,17 @@ def test_swing_cli_refuses_to_trade_on_broken_data(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert main(['swing', '--state', str(tmp_path / 'state')]) == 3
     assert not (tmp_path / 'state' / 'swing' / 'state.json').exists()
+
+
+def test_a_late_intraday_run_exits_quietly(tmp_path, monkeypatch):
+    """GitHub's scheduler can start the intraday job after the square-off; that
+    run must do nothing and send no email."""
+    import nsebot.__main__ as cli
+    import nsebot.engine.intraday as intraday
+    sent = []
+    monkeypatch.setattr(nsebot.data, 'YahooProvider', FakeProvider)
+    monkeypatch.setattr(intraday.IntradayEngine, 'run_session', lambda self, provider, **k: [])
+    monkeypatch.setattr(cli, 'send_email', lambda *a, **k: sent.append(a))
+    monkeypatch.chdir(tmp_path)
+    assert main(['intraday', '--state', str(tmp_path / 'state')]) == 0
+    assert sent == []

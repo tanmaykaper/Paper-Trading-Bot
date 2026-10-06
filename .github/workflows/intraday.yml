@@ -4,7 +4,15 @@
 # Yahoo's 5-minute bars after every bar closes, runs the opening-range
 # breakout engine, and squares everything off at 15:10 IST — before 15:15,
 # and well ahead of Zerodha's own 15:20 auto-square-off and its fee. GitHub
-# caps a job at 6 hours; 09:18 -> 15:12 fits.
+# caps a job at 6 hours: starting at 09:22 leaves ~8 minutes for setup and
+# the final commit before 15:12 + the cap (09:18 did not — the job would be
+# killed just before the square-off). The opening range (09:15-09:30) is
+# read from Yahoo's history, so the later start loses nothing.
+#
+# GitHub's scheduler often runs this repo's jobs hours late, which for an
+# intraday session means a short or missed day. docs/SCHEDULING.md sets up a
+# free external trigger (cron-job.org -> workflow_dispatch) that starts it on
+# time; this schedule stays as the fallback.
 #
 # Sizing note: no intraday variant has passed out-of-sample yet
 # (docs/RESEARCH.md), so the Kelly sizer trades the 0.5% risk floor and this
@@ -17,17 +25,17 @@ name: NSE Intraday Bot
 
 on:
   schedule:
-    - cron: '48 3 * * 1-5'       # 09:18 IST, Mon-Fri
+    - cron: '52 3 * * 1-5'       # 09:22 IST, Mon-Fri (fallback; see docs/SCHEDULING.md)
   workflow_dispatch:
 
 concurrency:
-  group: nsebot-state
+  group: nsebot-intraday         # one queue per bot (see main.yml)
   cancel-in-progress: false
 
 jobs:
   intraday:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
+    timeout-minutes: 360             # GitHub's maximum for a hosted runner
     permissions:
       contents: write
     steps:

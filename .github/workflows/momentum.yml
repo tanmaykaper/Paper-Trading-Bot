@@ -9,18 +9,23 @@
 # list the next run falls back on if NSE is unreachable.
 #
 # Free: Yahoo daily bars, NSE's public equity list, paper broker.
-# Re-runs are safe: a session already processed is skipped.
+# Re-runs are safe: a session already processed is skipped, before any
+# download, so the three backup slots cost seconds when the main run got
+# through (GitHub runs schedules late and drops some: docs/SCHEDULING.md).
 
 name: nsebot momentum
 
 on:
   schedule:
     - cron: '10 12 * * 1-5'      # 17:40 IST, Mon-Fri — after the 17:15 swing run
+    - cron: '40 14 * * 1-5'      # 20:10 IST  backup
+    - cron: '40 17 * * 1-5'      # 23:10 IST  backup
+    - cron: '40 1 * * 2-6'       # 07:10 IST next morning, before the open  backup
   workflow_dispatch:
 
 concurrency:
-  group: nsebot-state            # shared with main.yml and intraday.yml: one writer of state/
-  cancel-in-progress: false
+  group: nsebot-momentum         # one queue per bot (see main.yml); each bot writes only its own
+  cancel-in-progress: false      # state/<mode>/ and the commit step rebases and retries the push
 
 jobs:
   momentum:
