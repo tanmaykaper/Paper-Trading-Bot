@@ -9,17 +9,25 @@
 # Free: Yahoo daily bars, paper broker. Optional email via the existing
 # EMAIL_SENDER / EMAIL_PASSWORD / EMAIL_RECIPIENT secrets.
 # Re-runs are safe: a session already processed is skipped.
+#
+# GitHub's scheduler runs this repo's jobs hours late and now and then drops
+# one (docs/SCHEDULING.md), so the cycle is scheduled four times. The first
+# run that gets through processes the session; the rest find nothing to do.
+# A run before 15:45 IST the next day still processes the previous session.
 
 name: NSE Paper Trading Bot
 
 on:
   schedule:
     - cron: '45 11 * * 1-5'      # 17:15 IST, Mon-Fri (NSE closes 15:30; Yahoo settles by then)
+    - cron: '15 14 * * 1-5'      # 19:45 IST  backup
+    - cron: '15 17 * * 1-5'      # 22:45 IST  backup
+    - cron: '15 1 * * 2-6'       # 06:45 IST next morning, before the open  backup
   workflow_dispatch:
 
 concurrency:
-  group: nsebot-state            # shared with intraday.yml and momentum.yml: one writer of state/
-  cancel-in-progress: false
+  group: nsebot-swing            # one queue per bot: GitHub keeps one waiting run per group, so a
+  cancel-in-progress: false      # shared group let one bot's queued run cancel another's
 
 jobs:
   swing:

@@ -92,6 +92,11 @@ def cmd_intraday(args):
     engine = IntradayEngine(cfg, _broker(args.broker), ledger, workdir='.', log=logger.info,
                             latch_dir=ledger.dir)
     reports = engine.run_session(YahooProvider(chunk_size=40, pause_s=0.5))
+    if not reports:
+        # Started after the 15:10 square-off — a late or duplicate scheduled run
+        # (docs/SCHEDULING.md). Nothing ran, so no report and no email.
+        logger.info('intraday session already over when this run started — nothing to do')
+        return 0
     md = intraday_report(reports, ledger)
     print(md)
     job_summary(md)
