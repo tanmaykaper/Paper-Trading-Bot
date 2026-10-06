@@ -1,82 +1,140 @@
-# Scheduling: making the bots run on time
+# Scheduling: how the bots run on their own
 
-## Why this is needed
+## The problem
 
-GitHub Actions' scheduler is best-effort, and for this repo it runs late:
+GitHub Actions' scheduler is best-effort. In GitHub's own words, scheduled runs "can be delayed during periods of high loads … High load times include the start of every hour. If the load is sufficiently high enough, some queued jobs may be dropped."
 
-- On 5 Oct 2026 the swing run scheduled for 17:15 IST started at 01:13 IST, and the momentum run scheduled for 17:40 IST started at 02:01 IST. Both were about 8 hours late.
-- The V2 bot's 22:30 IST schedule ran 2–5 hours late on every day in its logs.
-- Some runs never start. The 02:01 IST momentum run waited 15 minutes for a machine, was cancelled by GitHub and never ran a line of code. Its email says "All jobs were cancelled".
+For this repo that means:
 
-**Swing and momentum.** These are end-of-day jobs, and every run is safe to repeat. A run that comes late still processes the right session. A session that has already been processed is skipped, and missed days are caught up. Two settings in the workflows cover the rest:
+| When | What GitHub did |
+|---|---|
+| V2 era, Sep 2026 | The 22:30 IST schedule ran 2–5 hours late every day. |
+| 5 Oct, evening | Swing (due 17:15) ran at 01:13. Momentum (due 17:40) started at 02:01, waited 15 minutes for a machine, and was cancelled without running ("All jobs were cancelled"). |
+| 6 Oct, morning | Intraday (due 09:22) ran at 16:18, after the market closed. |
+| 6 Oct, evening | Neither the 17:15 swing slot nor the 17:40 momentum slot had started by 18:46. |
 
-- **Backup runs.** `main.yml` (swing) fires at 17:15, 19:45, 22:45 and 06:45 IST the next morning. `momentum.yml` fires at 17:40, 20:10, 23:10 and 07:10 IST. The first run that gets through does the day's work; the others find nothing to do. Momentum checks this before its big download, so a backup costs seconds.
-- **One queue per bot.** GitHub keeps only one waiting run per queue, so when all three bots shared one queue, a waiting momentum run could cancel a waiting swing run. Now each bot has its own queue. They write different `state/<mode>/` folders, and the commit step rebases and retries its push.
+Nothing inside the repo can make GitHub's scheduler punctual. What the repo can do is make sure a late or dropped run never costs a session, without anyone looking after it.
 
-**Intraday.** It must run during market hours, 09:22–15:12 IST. A late start means a short or missed session. It doesn't cause bad trades: a run that starts after 15:10 exits at once and sends no email. GitHub's schedule can't fix this, but a free external scheduler that presses "Run workflow" for you can. Runs started that way begin within seconds.
+## What the repo does on its own (no setup, no Claude)
+
+1. **Many schedule slots.** Each slot lands off the round minutes (:13, :37, :22), away from the busy start of the hour.
+
+   | Bot | Scheduled (IST) |
+   |---|---|
+   | Swing (`main.yml`) | hourly at :13 from 17:13 to 00:13, then 02:13, 04:13, 06:13, 08:13 |
+   | Momentum (`momentum.yml`) | hourly at :37 from 17:37 to 00:37, then 02:37, 04:37, 06:37, 08:37 |
+   | Intraday (`intraday.yml`) | 09:22, with a retry at 11:22 |
+
+2. **A ten-second check first.** Each run starts with `scripts/should_run.py`, which needs nothing installed. If the day's session is already processed (swing, momentum), or the market isn't open (intraday), the run stops right there. So the extra slots cost almost nothing, and the first slot that gets through does the work.
+3. **Runs are safe to repeat, and they catch up.**
+   - A session already processed is never redone.
+   - A late run processes the right session. Before 15:45 IST the next day, that's the previous session.
+   - Swing walks open positions through every bar it missed.
+   - Momentum fills queued orders at the open they were meant for.
+4. **One queue per bot**, so one bot's waiting run can't cancel another's.
+
+Expect a long list of short green runs under **Actions**, most of them finishing in seconds with "nothing to do". That's the design working, not a problem.
+
+**The upshot:** as long as any one slot runs before the next morning's open, nothing is lost. Even GitHub's worst delay seen here, about 8 hours, gets the 17:13 slot through by about 01:00 IST.
+
+**What it can't fix:**
+- End-of-day reports can arrive late at night.
+- Intraday needs to run during market hours, so a late GitHub start still means a short or missed session.
+
+The trigger below fixes both.
 
 ---
 
-## Set up an on-time trigger for intraday (about 10 minutes, free)
+## Make it punctual (optional, about 10 minutes, free)
 
-You need a GitHub token that can start workflows in this one repository, and a free [cron-job.org](https://cron-job.org) account that sends the start request each weekday at 09:22 IST.
+A run started through GitHub's "Run workflow" API begins within seconds, unlike a scheduled one. A free scheduler such as [cron-job.org](https://cron-job.org) can call that API at fixed times. Runs started this way always run in full. The GitHub schedules stay as the safety net, and their check sees the day is done and stops.
 
 ### 1. Create a fine-grained GitHub token
 
 1. On GitHub, open your profile menu, then **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
 2. Fill in the form:
-   - **Token name:** `nsebot intraday trigger`
-   - **Expiration:** pick a date, for example 1 year out, and put a reminder in your calendar to renew it.
+   - **Token name:** `nsebot scheduler`
+   - **Expiration:** pick a date, for example 1 year out, and put a renewal reminder in your calendar.
    - **Repository access:** **Only select repositories**, then choose `tanmaykaper/Paper-Trading-Bot`.
-   - **Permissions → Repository permissions → Actions:** **Read and write**. "Metadata: Read-only" is added automatically. Leave everything else at **No access**.
+   - **Permissions → Repository permissions → Actions:** **Read and write**. "Metadata: Read-only" is added automatically; leave everything else at **No access**.
 3. Click **Generate token** and copy it. GitHub shows it only once.
 
-This token can only start, cancel and view workflow runs in this one repository. It can't read your secrets, change code or touch other repositories. You can revoke it at any time on the same page.
+This token can only start, cancel and view workflow runs in this one repository. It can't read secrets, change code or reach other repositories. You can revoke it at any time on the same page.
 
-### 2. Check that the token works (optional, from any terminal)
+### 2. Check that it works (optional)
 
 ```bash
 curl -i -X POST \
   -H "Accept: application/vnd.github+json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
-  https://api.github.com/repos/tanmaykaper/Paper-Trading-Bot/actions/workflows/intraday.yml/dispatches \
+  https://api.github.com/repos/tanmaykaper/Paper-Trading-Bot/actions/workflows/momentum.yml/dispatches \
   -d '{"ref":"main"}'
 ```
 
-You should get `HTTP/2 204` back, and a new **NSE Intraday Bot** run appears under the repo's **Actions** tab. Outside market hours that run exits within a minute without trading or emailing, so the test is safe at any time.
+You should get `HTTP/2 204` back, and a new **nsebot momentum** run appears under **Actions**. It's safe at any time: a session that's already processed is skipped.
 
-### 3. Create the scheduled job on cron-job.org
+### 3. Create three jobs on cron-job.org
 
-1. Sign up at cron-job.org (free) and click **Create cronjob**.
-2. On the **Common** tab:
-   - **Title:** `nsebot intraday`
-   - **URL:** `https://api.github.com/repos/tanmaykaper/Paper-Trading-Bot/actions/workflows/intraday.yml/dispatches`
-   - **Execution schedule:** **Custom**, at **09:22**, on **Monday to Friday** only.
-   - **Time zone:** **Asia/Kolkata**. If the job form doesn't offer a time zone, set it in your account settings.
-3. On the **Advanced** tab:
-   - **Request method:** `POST`
-   - **Headers:** add these four.
+Sign up (free). For each row below, click **Create cronjob** and fill in the same settings, changing only the title, workflow and time.
 
-     | Key | Value |
-     |---|---|
-     | `Accept` | `application/vnd.github+json` |
-     | `Authorization` | `Bearer YOUR_TOKEN` |
-     | `X-GitHub-Api-Version` | `2022-11-28` |
-     | `Content-Type` | `application/json` |
+| Title | Workflow file in the URL | Time (Asia/Kolkata), Mon–Fri |
+|---|---|---|
+| `nsebot swing` | `main.yml` | 17:20 |
+| `nsebot momentum` | `momentum.yml` | 17:45 |
+| `nsebot intraday` | `intraday.yml` | 09:22 |
 
-   - **Request body:** `{"ref":"main"}`
-4. Under notifications, turn on **notify me when execution fails**. A failure usually means the token expired.
-5. Save, then use **Test run**. It should report status `204`, and a new run should appear in Actions.
+The settings for each job:
 
-### 4. Confirm it the next trading day
+- **URL:** `https://api.github.com/repos/tanmaykaper/Paper-Trading-Bot/actions/workflows/<workflow file>/dispatches`
+- **Schedule:** **Custom**, at the time in the table, **Monday to Friday** only.
+- **Time zone:** **Asia/Kolkata**. If the job form doesn't offer one, set it in your account settings.
+- **Advanced tab:**
+  - **Request method:** `POST`
+  - **Request body:** `{"ref":"main"}`
+  - **Headers:**
 
-After 09:22 IST, open **Actions → NSE Intraday Bot**. There should be a run started by **workflow_dispatch** at about 09:22 IST that keeps running until about 15:12.
+    | Key | Value |
+    |---|---|
+    | `Accept` | `application/vnd.github+json` |
+    | `Authorization` | `Bearer YOUR_TOKEN` |
+    | `X-GitHub-Api-Version` | `2022-11-28` |
+    | `Content-Type` | `application/json` |
+
+- **Notifications:** turn on **notify me when execution fails**. A failure usually means the token expired.
+
+Save each job, then click **Test run**. It should report `204`, and a run should appear under **Actions**.
 
 ### Notes
 
-- **Why 09:22 and not earlier.** GitHub stops any job after 6 hours. Starting at 09:22 leaves time for setup and the final save before the 15:10 square-off. The opening range (09:15–09:30) is read from Yahoo's history, so nothing is lost.
-- **The fallback schedule stays.** `intraday.yml`'s own 09:22 schedule remains as a backup. If both fire, the second waits in the bot's queue until the first finishes, then exits immediately and quietly.
-- **NSE holidays.** The bot sees no session data, logs it and stops. No trades are placed.
-- **Swing and momentum (optional).** The same method can start them on time too. Add two more cron-job.org jobs with the same headers and body, but with `main.yml` (at 17:15) or `momentum.yml` (at 17:40) in place of `intraday.yml` in the URL. The backup runs make this optional.
-- **Renewing the token.** Generate a new token, then paste it into the cron-job.org job's `Authorization` header in place of the old one.
+- **Why 09:22 for intraday.** GitHub stops any job after 6 hours. Starting at 09:22 leaves time for setup and the final save before the 15:10 square-off. The opening range (09:15–09:30) is read from Yahoo's history, so nothing is lost by starting then.
+- **Why 17:20 and 17:45.** Yahoo's daily bar is final by about 15:45 IST, so any time after that works. The two jobs are staggered so they don't hit Yahoo at the same moment.
+- **NSE holidays.** The bots find no new session and do nothing.
+- **Renewing the token.** Generate a new token and paste it into each job's `Authorization` header in place of the old one. If you forget, the GitHub schedules keep the bots running, just late.
+
+---
+
+## Get the reports by email (optional, about 5 minutes)
+
+Every run writes its report to the run's summary page under **Actions**. To get it by email instead, add three repository secrets. The bots then email you when they trade, when a breaker trips, when a warning fires, and when data fails.
+
+1. **Create a Gmail app password.** Google Account → **Security** → turn on **2-Step Verification** if it's off → **App passwords** → create one named `nsebot` and copy the 16-character code.
+2. **Add the secrets.** On GitHub, open the repo → **Settings → Secrets and variables → Actions → New repository secret**, and add these three:
+
+   | Name | Value |
+   |---|---|
+   | `EMAIL_SENDER` | the Gmail address |
+   | `EMAIL_PASSWORD` | the 16-character app password |
+   | `EMAIL_RECIPIENT` | where the reports should go (it can be the same address) |
+
+The next run that has something to report sends an email. Nothing else needs changing.
+
+---
+
+## How you'll know if something is wrong
+
+- **GitHub emails the repository owner whenever a run fails** (the default notification setting). That covers data outages, which exit with an error and leave state untouched, and cancelled runs.
+- **cron-job.org emails you** if its call to GitHub fails, usually because the token expired.
+- **A run marked "cancelled" is usually harmless.** When GitHub releases several delayed slots at once, a bot's queue keeps one waiting run and cancels the rest, which had nothing to do anyway.
+- **If every slot for a day is lost,** the next run catches up: swing walks its positions bar by bar, and momentum fills queued orders at the right open. A swing signal day that was never processed is the one thing that can't be recovered.
+- **The bots' own warnings** appear in each report and in the emails: NOT TRADING, data faults, stale prices, split adjustments and breaker trips.

@@ -124,7 +124,8 @@ Environment variables (all optional):
 
 **GitHub Actions:**
 - `main.yml` runs the swing cycle, `intraday.yml` the intraday session and `momentum.yml` the momentum sleeve. Each commits its own `state/<mode>/` folder and has its own queue.
-- GitHub runs this repo's schedules hours late and sometimes drops one. Swing and momentum each have three backup runs that do nothing once the day is processed. Intraday needs a free external trigger to start on time: see [`docs/SCHEDULING.md`](docs/SCHEDULING.md).
+- GitHub runs this repo's schedules hours late and sometimes drops one, so each bot is scheduled many times. A seconds-long first step (`scripts/should_run.py`) stops every slot after the first successful one, so the bots run on their own and never lose a session as long as one slot gets through before the next open.
+- For on-time runs (needed for intraday) and email reports, see [`docs/SCHEDULING.md`](docs/SCHEDULING.md). Both are one-time, free setups.
 - On rebalance days `momentum.yml` downloads NSE's equity list (saved to `state/momentum/` as a fallback for up to 30 days) and about 2,600 symbols from Yahoo, which takes a few minutes. Other days it fetches only the holdings.
 - Scheduled workflows only run from the **default branch**, so this code must be merged into `main` to go live.
 - `research.yml` runs the tests and the backtest or experiments on `claude/**` branches.

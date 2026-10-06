@@ -10,9 +10,10 @@
 # read from Yahoo's history, so the later start loses nothing.
 #
 # GitHub's scheduler often runs this repo's jobs hours late, which for an
-# intraday session means a short or missed day. docs/SCHEDULING.md sets up a
-# free external trigger (cron-job.org -> workflow_dispatch) that starts it on
-# time; this schedule stays as the fallback.
+# intraday session means a short or missed day. A free external trigger
+# (cron-job.org -> workflow_dispatch, docs/SCHEDULING.md) starts it on time;
+# the two scheduled slots below are the fallback, and the first step stops a
+# slot within seconds when it lands outside the session window.
 #
 # Sizing note: no intraday variant has passed out-of-sample yet
 # (docs/RESEARCH.md), so the Kelly sizer trades the 0.5% risk floor and this
@@ -25,7 +26,10 @@ name: NSE Intraday Bot
 
 on:
   schedule:
-    - cron: '52 3 * * 1-5'       # 09:22 IST, Mon-Fri (fallback; see docs/SCHEDULING.md)
+    # 09:22 IST, plus one retry in case GitHub delays or drops it. A retry that arrives while
+    # a session is running waits in this bot's queue, then finds the session over and stops.
+    - cron: '52 3 * * 1-5'       # 09:22 IST
+    - cron: '52 5 * * 1-5'       # 11:22 IST retry
   workflow_dispatch:
 
 concurrency:
@@ -40,15 +44,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Anything to do?             # seconds; skips the rest when the work is already done
+        id: gate
+        run: python3 scripts/should_run.py intraday
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
         with:
           python-version: '3.11'
           cache: 'pip'
       - name: Install
+        if: steps.gate.outputs.run == 'true'
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
       - name: Intraday session (until 15:10 square-off)
+        if: steps.gate.outputs.run == 'true'
         env:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
@@ -56,7 +66,7 @@ jobs:
           NSEBOT_BROKER: paper
         run: python -m nsebot intraday
       - name: Commit state
-        if: always()
+        if: always() && steps.gate.outputs.run == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
