@@ -3,21 +3,21 @@
 <!-- progress:start — drawn by scripts/progress.py after every bot run; edits here are overwritten -->
 ## How the money is doing
 
-**₹1,50,271 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (+0.18%), at the close on 6 Oct 2026.
+**₹1,50,271 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (+0.18%), at the close on 7 Oct 2026.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/progress/chart-dark.svg">
-  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,50,271 on 6 Oct 2026." src="docs/progress/chart-light.svg">
+  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,50,271 on 7 Oct 2026." src="docs/progress/chart-light.svg">
 </picture>
 
 That is what the three bots' paper trades would have left you with as real trades, had you sold everything at that close: after Zerodha's charges and slippage on every trade, the cost of selling the open positions, and income tax on the profit.
 
-| Bot | Since | Value | Return | Change on 6 Oct | Closed trades | Open now |
+| Bot | Since | Value | Return | Change on 7 Oct | Closed trades | Open now |
 |---|---|---|---|---|---|---|
-| Momentum | 5 Oct 2026 | ₹50,567 | +1.13% | +₹567 | 0 | 10 |
+| Momentum | 5 Oct 2026 | ₹50,567 | +1.13% | ₹0 | 0 | 10 |
 | Swing | 5 Oct 2026 | ₹50,000 | 0.00% | ₹0 | 0 | 0 |
 | Intraday | not started | ₹50,000 | — | — | 0 | 0 |
-| **All three** | | **₹1,50,567** | **+0.38%** | +₹567 | 0 | 10 |
+| **All three** | | **₹1,50,567** | **+0.38%** | ₹0 | 0 | 10 |
 | Selling the open positions | | −₹225 | | | | |
 | Tax on the profit | | −₹71 | | | | |
 | **In your pocket** | | **₹1,50,271** | **+0.18%** | | | |
