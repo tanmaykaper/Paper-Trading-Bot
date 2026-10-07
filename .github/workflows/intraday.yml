@@ -65,20 +65,6 @@ jobs:
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
           NSEBOT_BROKER: paper
         run: python -m nsebot intraday
-      - name: Commit state
+      - name: Commit state and redraw the README progress chart
         if: always() && steps.gate.outputs.run == 'true'
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add state/
-          if git diff --staged --quiet; then
-            echo "state unchanged"
-            exit 0
-          fi
-          git commit -m "📈 intraday $(TZ=Asia/Kolkata date +'%Y-%m-%d') [skip ci]"
-          for i in 1 2 3 4; do
-            git pull --rebase origin "${GITHUB_REF_NAME}" && git push && exit 0
-            sleep $((i * 5))
-          done
-          echo "::error::could not push state after 4 attempts"
-          exit 1
+        run: bash scripts/commit_state.sh "📈 intraday $(TZ=Asia/Kolkata date +'%Y-%m-%d') [skip ci]"

@@ -63,3 +63,10 @@ def test_intraday_session_fits_inside_the_job_limit():
             start_ist = hour * 60 + minute + 330             # UTC -> IST
             assert start_ist >= 9 * 60 + 15                  # never before the open
             assert end_ist - start_ist + 5 <= timeout        # 5 minutes for setup and the final commit
+
+
+def test_every_bot_saves_state_and_redraws_the_progress_chart_through_one_script():
+    for f in ('main.yml', 'momentum.yml', 'intraday.yml'):
+        step = _wf(f).split('- name: Commit state')[1]
+        assert "if: always() && steps.gate.outputs.run == 'true'" in step, f
+        assert 'run: bash scripts/commit_state.sh "' in step, f
