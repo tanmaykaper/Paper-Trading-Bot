@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="320" viewBox="0 0 800 320" role="img" aria-labelledby="t" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
+<title id="t">Money in your pocket after charges and tax: ₹1,50,271 on 6 Oct 2026, +0.18% on the ₹1,50,000 put in on 5 Oct 2026.</title>
+<line x1="86" x2="104" y1="15" y2="15" stroke="#2a78d6" stroke-width="2" stroke-linecap="round"/>
+<text x="112" y="19" font-size="12" fill="#52514e">In your pocket, after charges and tax</text>
+<line x1="399" x2="417" y1="15" y2="15" stroke="#a8a79f" stroke-width="1" stroke-linecap="round"/>
+<text x="425" y="19" font-size="12" fill="#52514e">Put in: ₹1,50,000</text>
+<line x1="86" x2="688" y1="282.0" y2="282.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76" y="286.0" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,46,000</text>
+<line x1="86" x2="688" y1="223.0" y2="223.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76" y="227.0" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,48,000</text>
+<line x1="86" x2="688" y1="164.0" y2="164.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76" y="168.0" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,50,000</text>
+<line x1="86" x2="688" y1="105.0" y2="105.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76" y="109.0" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,52,000</text>
+<line x1="86" x2="688" y1="46.0" y2="46.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76" y="50.0" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,54,000</text>
+<line x1="86" x2="688" y1="164.0" y2="164.0" stroke="#a8a79f" stroke-width="1"/>
+<text x="86.0" y="308" text-anchor="start" font-size="12" fill="#52514e">5 Oct 2026</text>
+<text x="688.0" y="308" text-anchor="end" font-size="12" fill="#52514e">6 Oct</text>
+<path d="M86.0,282.0 L86.0,164.0 L688.0,156.0 L688.0,282.0 Z" fill="#2a78d6" fill-opacity="0.08"/>
+<polyline points="86.0,164.0 688.0,156.0" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="688.0" cy="156.0" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="700.0" y="156.0" font-size="14" font-weight="600" fill="#0b0b0b">₹1,50,271</text>
+<text x="700.0" y="173.0" font-size="12" fill="#52514e">+0.18%</text>
+</svg>

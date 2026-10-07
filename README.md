@@ -1,5 +1,30 @@
 # nsebot — NSE paper trading on free data
 
+<!-- progress:start — drawn by scripts/progress.py after every bot run; edits here are overwritten -->
+## How the money is doing
+
+**₹1,50,271 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (+0.18%), at the close on 6 Oct 2026.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/progress/chart-dark.svg">
+  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,50,271 on 6 Oct 2026." src="docs/progress/chart-light.svg">
+</picture>
+
+That is what the three bots' paper trades would have left you with as real trades, had you sold everything at that close: after Zerodha's charges and slippage on every trade, the cost of selling the open positions, and income tax on the profit.
+
+| Bot | Since | Value | Return | Change on 6 Oct | Closed trades | Open now |
+|---|---|---|---|---|---|---|
+| Momentum | 5 Oct 2026 | ₹50,567 | +1.13% | +₹567 | 0 | 10 |
+| Swing | 5 Oct 2026 | ₹50,000 | 0.00% | ₹0 | 0 | 0 |
+| Intraday | not started | ₹50,000 | — | — | 0 | 0 |
+| **All three** | | **₹1,50,567** | **+0.38%** | +₹567 | 0 | 10 |
+| Selling the open positions | | −₹225 | | | | |
+| Tax on the profit | | −₹71 | | | | |
+| **In your pocket** | | **₹1,50,271** | **+0.18%** | | | |
+
+<sub>Value is cash plus open positions at the close, after the charges already paid. Tax is 20.8% on delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>
+<!-- progress:end -->
+
 A lean NSE trading engine with three modes that share one risk core:
 
 | Mode | Product | Data | When it runs | Strategy |
@@ -124,6 +149,7 @@ Environment variables (all optional):
 
 **GitHub Actions:**
 - `main.yml` runs the swing cycle, `intraday.yml` the intraday session and `momentum.yml` the momentum sleeve. Each commits its own `state/<mode>/` folder and has its own queue.
+- After each run, `scripts/commit_state.sh` saves the bot's state and redraws the chart and table at the top of this README (`scripts/progress.py`, charts in `docs/progress/`). Delete the block between the `progress` markers to switch it off.
 - GitHub runs this repo's schedules hours late and sometimes drops one, so each bot is scheduled many times. A seconds-long first step (`scripts/should_run.py`) stops every slot after the first successful one, so the bots run on their own and never lose a session as long as one slot gets through before the next open.
 - For on-time runs (needed for intraday) and email reports, see [`docs/SCHEDULING.md`](docs/SCHEDULING.md). Both are one-time, free setups.
 - On rebalance days `momentum.yml` downloads NSE's equity list (saved to `state/momentum/` as a fallback for up to 30 days) and about 2,600 symbols from Yahoo, which takes a few minutes. Other days it fetches only the holdings.
@@ -167,7 +193,8 @@ nsebot/
   research/     event_study.py · experiments.py · attribution.py · hurdle.py · phase5*.py · symbol_check.py
   backtest.py   data.py  listing.py  market.py  ledger.py  costs.py  ratelimit.py  regime.py  notify.py
 state/          live paper state, committed by the workflows
-docs/           AUTOPSY_V2.md · RESEARCH.md
+docs/           AUTOPSY_V2.md · RESEARCH.md · SCHEDULING.md · progress/ (README charts, drawn by the bots)
+scripts/        should_run.py (schedule gate) · commit_state.sh · progress.py (README chart and table)
 diagnostics/    offline reproduction of the V2 locks
 legacy/         V1/V2 code and their trade logs
 ```
