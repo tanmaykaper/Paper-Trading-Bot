@@ -23,9 +23,9 @@
     "score": 5.3241,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-CUPID-1",
-    "anchor_date": "2026-10-06",
-    "anchor_open": 310.95001220703125,
-    "anchor_close": 324.20001220703125
+    "anchor_date": "2026-10-07",
+    "anchor_open": 325.0,
+    "anchor_close": 343.95001220703125
    }
   },
   {
@@ -48,9 +48,9 @@
     "score": 4.795,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-STLTECH-2",
-    "anchor_date": "2026-10-06",
-    "anchor_open": 1034.4000244140625,
-    "anchor_close": 1016.7000122070312
+    "anchor_date": "2026-10-07",
+    "anchor_open": 1014.0,
+    "anchor_close": 1016.7999877929688
    }
   },
   {
@@ -73,9 +73,9 @@
     "score": 3.6712,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-SIGMAADV-3",
-    "anchor_date": "2026-10-06",
-    "anchor_open": 1107.0,
-    "anchor_close": 1119.4000244140625
+    "anchor_date": "2026-10-07",
+    "anchor_open": 1109.0,
+    "anchor_close": 1091.5999755859375
    }
   },
   {
@@ -148,9 +148,9 @@
     "score": 2.6264,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-VENUSREM-6",
-    "anchor_date": "2026-10-06",
-    "anchor_open": 1807.9000244140625,
-    "anchor_close": 1746.699951171875
+    "anchor_date": "2026-10-07",
+    "anchor_open": 1721.0,
+    "anchor_close": 1769.4000244140625
    }
   },
   {
@@ -198,9 +198,9 @@
     "score": 1.9902,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-HFCL-8",
-    "anchor_date": "2026-10-06",
-    "anchor_open": 262.7799987792969,
-    "anchor_close": 262.7799987792969
+    "anchor_date": "2026-10-07",
+    "anchor_open": 275.9100036621094,
+    "anchor_close": 271.8999938964844
    }
   },
   {
@@ -248,9 +248,9 @@
     "score": 1.8978,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-ATHERENERG-10",
-    "anchor_date": "2026-10-06",
-    "anchor_open": 1408.699951171875,
-    "anchor_close": 1446.0
+    "anchor_date": "2026-10-07",
+    "anchor_open": 1436.0,
+    "anchor_close": 1455.0
    }
   }
  ],
@@ -260,18 +260,18 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-06",
-  "trades_today": 10,
+  "session": "2026-10-07",
+  "trades_today": 0,
   "realised_today": 0.0,
-  "peak_equity": 50567.13972738933,
+  "peak_equity": 51018.01948813152,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-06",
+ "last_processed": "2026-10-07",
  "traded_today": [],
  "trade_seq": 10,
  "low_eligible_runs": 0,
  "last_eligible": 898,
  "starved_rebalances": 0,
- "sessions_since_rebalance": 1
+ "sessions_since_rebalance": 2
 }
