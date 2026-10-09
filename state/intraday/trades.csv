@@ -1,0 +1,5 @@
+trade_id,mode,symbol,side,qty,entry_time,entry_price,initial_stop,exit_time,exit_price,exit_reason,bars_held,gross_pnl,costs,net_pnl,net_r,trigger,score
+I20261009-NTPC-2,intraday,NTPC,LONG,145,2026-10-09 11:20:00+05:30,314.35,312.35,2026-10-09 11:45:00+05:30,312.35,stop,4,-290.0,48.15,-338.15,-1.166,orb_vwap,71.45
+I20261009-ONGC-3,intraday,ONGC,LONG,374,2026-10-09 11:50:00+05:30,220.82,220.11,2026-10-09 13:20:00+05:30,221.61,trailing stop,17,295.46,76.39,219.07,0.825,orb_vwap,53.93
+I20261009-ULTRACEMCO-4,intraday,ULTRACEMCO,LONG,7,2026-10-09 12:25:00+05:30,10613.0,10573.0,2026-10-09 14:40:00+05:30,10651.0,trailing stop,26,266.0,73.46,192.54,0.6876,orb_vwap,42.26
+I20261009-CHOLAFIN-1,intraday,CHOLAFIN,LONG,11,2026-10-09 11:00:00+05:30,1591.6,1569.2,2026-10-09 15:10:00+05:30,1580.3,square-off 15:10,49,-124.3,18.49,-142.79,-0.5795,orb_vwap,52.88

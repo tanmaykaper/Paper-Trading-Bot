@@ -1,11 +1,28 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 50000.0,
+ "cash": 49930.67052217628,
  "positions": [],
  "pending": [],
- "breakers": {},
+ "breakers": {
+  "consecutive_losses": 1,
+  "cooldown_left": 0,
+  "reduced": false,
+  "reduced_left": 0,
+  "session": "2026-10-09",
+  "trades_today": 4,
+  "realised_today": -69.32947782371178,
+  "peak_equity": 50215.74045179347,
+  "halted_for_session": false,
+  "latched": false
+ },
  "last_processed": null,
- "traded_today": [],
- "trade_seq": 0
+ "traded_today": [
+  "CHOLAFIN",
+  "NTPC",
+  "ONGC",
+  "ULTRACEMCO"
+ ],
+ "trade_seq": 4,
+ "session": "2026-10-09"
 }
