@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="320" viewBox="0 0 800 320" role="img" aria-labelledby="t" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
-<title id="t">Money in your pocket after charges and tax: ₹1,50,628 on 8 Oct 2026, +0.42% on the ₹1,50,000 put in on 5 Oct 2026.</title>
+<title id="t">Money in your pocket after charges and tax: ₹1,50,133 on 8 Oct 2026, +0.09% on the ₹1,50,000 put in on 5 Oct 2026.</title>
 <line x1="86" x2="104" y1="15" y2="15" stroke="#3987e5" stroke-width="2" stroke-linecap="round"/>
 <text x="112" y="19" font-size="12" fill="#c3c2b7">In your pocket, after charges and tax</text>
 <line x1="399" x2="417" y1="15" y2="15" stroke="#5a5955" stroke-width="1" stroke-linecap="round"/>
@@ -19,9 +19,9 @@
 <text x="286.7" y="308" text-anchor="middle" font-size="12" fill="#c3c2b7">6 Oct</text>
 <text x="487.3" y="308" text-anchor="middle" font-size="12" fill="#c3c2b7">7 Oct</text>
 <text x="688.0" y="308" text-anchor="end" font-size="12" fill="#c3c2b7">8 Oct</text>
-<path d="M86.0,282.0 L86.0,164.0 L286.7,156.0 L487.3,145.5 L688.0,145.5 L688.0,282.0 Z" fill="#3987e5" fill-opacity="0.08"/>
-<polyline points="86.0,164.0 286.7,156.0 487.3,145.5 688.0,145.5" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="688.0" cy="145.5" r="5" fill="#3987e5" stroke="#0d1117" stroke-width="2"/>
-<text x="700.0" y="145.5" font-size="14" font-weight="600" fill="#ffffff">₹1,50,628</text>
-<text x="700.0" y="162.5" font-size="12" fill="#c3c2b7">+0.42%</text>
+<path d="M86.0,282.0 L86.0,164.0 L286.7,156.0 L487.3,145.5 L688.0,160.1 L688.0,282.0 Z" fill="#3987e5" fill-opacity="0.08"/>
+<polyline points="86.0,164.0 286.7,156.0 487.3,145.5 688.0,160.1" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="688.0" cy="160.1" r="5" fill="#3987e5" stroke="#0d1117" stroke-width="2"/>
+<text x="700.0" y="160.1" font-size="14" font-weight="600" fill="#ffffff">₹1,50,133</text>
+<text x="700.0" y="177.1" font-size="12" fill="#c3c2b7">+0.09%</text>
 </svg>

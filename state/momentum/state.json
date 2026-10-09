@@ -23,9 +23,9 @@
     "score": 5.3241,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-CUPID-1",
-    "anchor_date": "2026-10-07",
-    "anchor_open": 325.0,
-    "anchor_close": 343.95001220703125
+    "anchor_date": "2026-10-08",
+    "anchor_open": 348.5,
+    "anchor_close": 356.6499938964844
    }
   },
   {
@@ -48,9 +48,9 @@
     "score": 4.795,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-STLTECH-2",
-    "anchor_date": "2026-10-07",
-    "anchor_open": 1014.0,
-    "anchor_close": 1016.7999877929688
+    "anchor_date": "2026-10-08",
+    "anchor_open": 1009.7999877929688,
+    "anchor_close": 1011.5499877929688
    }
   },
   {
@@ -173,9 +173,9 @@
     "score": 2.5397,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-INDSWFTLAB-7",
-    "anchor_date": "2026-10-06",
-    "anchor_open": 388.70001220703125,
-    "anchor_close": 400.45001220703125
+    "anchor_date": "2026-10-08",
+    "anchor_open": 391.5,
+    "anchor_close": 366.1000061035156
    }
   },
   {
@@ -198,9 +198,9 @@
     "score": 1.9902,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-HFCL-8",
-    "anchor_date": "2026-10-07",
-    "anchor_open": 275.9100036621094,
-    "anchor_close": 271.8999938964844
+    "anchor_date": "2026-10-08",
+    "anchor_open": 269.0,
+    "anchor_close": 258.30999755859375
    }
   },
   {
@@ -223,9 +223,9 @@
     "score": 1.913,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-AEROFLEX-9",
-    "anchor_date": "2026-10-06",
-    "anchor_open": 549.7000122070312,
-    "anchor_close": 560.75
+    "anchor_date": "2026-10-08",
+    "anchor_open": 572.0499877929688,
+    "anchor_close": 529.0
    }
   },
   {
@@ -248,9 +248,9 @@
     "score": 1.8978,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-ATHERENERG-10",
-    "anchor_date": "2026-10-07",
-    "anchor_open": 1436.0,
-    "anchor_close": 1455.0
+    "anchor_date": "2026-10-08",
+    "anchor_open": 1454.5,
+    "anchor_close": 1406.0
    }
   }
  ],
@@ -260,18 +260,18 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-07",
+  "session": "2026-10-08",
   "trades_today": 0,
   "realised_today": 0.0,
   "peak_equity": 51018.01948813152,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-07",
+ "last_processed": "2026-10-08",
  "traded_today": [],
  "trade_seq": 10,
  "low_eligible_runs": 0,
  "last_eligible": 898,
  "starved_rebalances": 0,
- "sessions_since_rebalance": 2
+ "sessions_since_rebalance": 3
 }
