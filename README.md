@@ -16,8 +16,8 @@ That is what the three bots' paper trades would have left you with as real trade
 |---|---|---|---|---|---|---|
 | Momentum | 5 Oct 2026 | ₹44,782 | −10.44% | −₹5,610 | 0 | 10 |
 | Swing | 5 Oct 2026 | ₹50,000 | 0.00% | ₹0 | 0 | 0 |
-| Intraday | 9 Oct 2026 | ₹49,931 | −0.14% | −₹69 | 4 | 0 |
-| **All three** | | **₹1,44,712** | **−3.53%** | −₹5,680 | 4 | 10 |
+| Intraday | 9 Oct 2026 | ₹49,931 | −0.14% | −₹69 | 8 | 1 |
+| **All three** | | **₹1,44,712** | **−3.53%** | −₹5,680 | 8 | 11 |
 | Selling the open positions | | −₹216 | | | | |
 | Tax on the profit | | ₹0 | | | | |
 | **In your pocket** | | **₹1,44,497** | **−3.67%** | | | |
