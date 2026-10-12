@@ -1,0 +1,1175 @@
+# paper_trading_manager.py  ── FIXED + ENHANCED v2
+# ─────────────────────────────────────────────────────────────────────────────
+# Fixes vs original:
+#   1. entry_date column: handles both 'entry_datr' typo AND mixed date formats
+#      (DD-MM-YYYY vs YYYY-MM-DD) that existed in the legacy CSV
+#   2. Capital tracking: deployed capital is subtracted; new trades only open
+#      if free_cash >= capital_needed
+#   3. Unrealised P&L: get_summary() and print_open_positions() both compute
+#      mark-to-market for every open trade using latest prices
+#   4. Max open trade count enforced in open_trade() (not just in bot)
+#   5. Hold-days calculation fixed: uses robust date parsing
+#   6. Detailed EOD console output: capital used, free cash, each open position
+# ─────────────────────────────────────────────────────────────────────────────
+
+import pandas as pd
+import numpy as np
+import logging
+from datetime import datetime
+import os
+from exit_manager import compute_trailing_stop, ExitEngine
+from technical_indicators import TechnicalIndicators
+from trading_costs import round_trip_commission
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+def _parse_date(val):
+    """Parse a date string that may be DD-MM-YYYY, YYYY-MM-DD, or a timestamp."""
+    if pd.isna(val) or str(val).strip() in ('', 'nan', 'NaT'):
+        return None
+    s = str(val).strip()
+    for fmt in ('%d-%m-%Y', '%Y-%m-%d', '%Y-%m-%d %H:%M:%S'):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    try:
+        return pd.to_datetime(s).to_pydatetime()
+    except Exception:
+        return None
+
+
+# Columns the v4 stack records on every trade. bars_held is the important one:
+# it counts TRADING SESSIONS, which is the unit time_exit_bars and
+# max_hold_days are expressed in. See update_trades for why the old calendar
+# arithmetic was cutting trades roughly a third early.
+_STACK_COLS = [
+    'quality_score', 'p_win_est', 'time_exit_bars', 'entry_adx', 'highest_high',
+    'health_signals_at_exit', 'entry_slippage_pct', 'market_state_at_entry',
+    'bars_held', 'pyramid_adds',
+]
+
+
+class PaperTradingManager:
+    """
+    Paper trading ledger backed by CSV files.
+
+    Capital concepts:
+      initial_equity   — starting cash
+      realised_pnl     — sum of net_pnl on all CLOSED trades
+      deployed_capital — sum of (entry_price * position_size) for OPEN trades
+      free_cash        — initial_equity + realised_pnl - deployed_capital
+      unrealised_pnl   — mark-to-market on OPEN trades (requires live prices)
+      total_value      — free_cash + deployed_capital + unrealised_pnl
+    """
+
+    def __init__(self, initial_equity=10000, csv_path='paper_trades.csv',
+                 equity_csv_path='daily_equity.csv', commission_per_share=None,
+                 max_open_trades=5):
+        self.initial_equity       = initial_equity
+        # commission_per_share is accepted but no longer used — real per-
+        # trade cost now comes from trading_costs.round_trip_commission()
+        # (STT + exchange charges + a flat DP-style charge per sell), which
+        # replaced this flat ₹0.005/share placeholder after it was found to
+        # understate real Indian delivery-equity costs by roughly 100-200x
+        # for this project's typical trade size. Kept as an accepted
+        # (ignored) parameter so any existing call site passing it doesn't
+        # crash — see trading_costs.py to actually change cost assumptions.
+        self.commission_per_share = commission_per_share
+        self.max_open_trades      = max_open_trades
+        self.csv_path             = csv_path
+        self.equity_csv_path      = equity_csv_path
+        self.trade_counter        = 0
+
+        # In-memory accumulators (recomputed from CSV on load)
+        self.realised_pnl     = 0.0
+        self.deployed_capital = 0.0
+
+        self._ensure_csv_exists()
+        self._reload_state()
+        logger.info(f"✓ PaperTradingManager | Capital: ₹{self.initial_equity:,} | "
+                    f"Max open: {self.max_open_trades}")
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _ensure_csv_exists(self):
+        if not os.path.exists(self.csv_path):
+            pd.DataFrame(columns=[
+                'trade_id', 'symbol', 'side', 'entry_date', 'entry_price',
+                'stop_loss', 'target_price', 'position_size', 'status',
+                'exit_date', 'exit_price', 'exit_reason',
+                'gross_pnl', 'commission', 'net_pnl', 'hold_days', 'entry_type',
+                'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier',
+                'sentiment_score', 'sentiment_tier',
+                'initial_stop_loss', 'trade_group_id', 'tranche',
+            ] + _STACK_COLS).to_csv(self.csv_path, index=False)
+            logger.info(f"✓ Created {self.csv_path}")
+        else:
+            # Migrate an existing book to carry the columns the v4 stack writes.
+            # Added here rather than patched in from outside because the
+            # orchestrator was doing exactly that — reading the CSV, adding the
+            # column, writing it back — and a string landing in a freshly
+            # created all-NaN float64 column raised, which aborted the whole
+            # daily run on every day a fill occurred. Declaring the columns as
+            # object up front removes the failure mode rather than catching it.
+            try:
+                existing = pd.read_csv(self.csv_path)
+                missing = [c for c in _STACK_COLS if c not in existing.columns]
+                if missing:
+                    for c in missing:
+                        existing[c] = pd.Series([pd.NA] * len(existing), dtype=object)
+                    existing.to_csv(self.csv_path, index=False)
+                    logger.info(f"✓ Migrated {self.csv_path} — added columns: {missing}")
+            except Exception as e:
+                logger.error(f"Could not migrate trades CSV schema: {e}")
+
+        _EQUITY_COLS = [
+            'date', 'free_cash', 'deployed_capital', 'unrealised_pnl',
+            'total_portfolio_value', 'trades_open', 'trades_closed',
+            'realised_pnl', 'daily_realised_pnl'
+        ]
+
+        if not os.path.exists(self.equity_csv_path):
+            pd.DataFrame(columns=_EQUITY_COLS).to_csv(self.equity_csv_path, index=False)
+        else:
+            # Migrate legacy schemas (e.g. an older version of this file wrote
+            # different column names like 'equity'/'daily_pnl'/'cumulative_pnl').
+            # Without this, concat-by-column-name silently leaves the current
+            # schema's columns blank on every new row — exactly what happened
+            # to unrealised_pnl/total_portfolio_value in this bot's history.
+            try:
+                existing = pd.read_csv(self.equity_csv_path)
+                missing_cols = [c for c in _EQUITY_COLS if c not in existing.columns]
+                if missing_cols:
+                    for c in missing_cols:
+                        existing[c] = np.nan
+                    # keep legacy columns (don't destroy history) but ensure
+                    # every current-schema column exists so writes never drift
+                    existing.to_csv(self.equity_csv_path, index=False)
+                    logger.info(f"✓ Migrated {self.equity_csv_path} schema — added columns: {missing_cols}")
+            except Exception as e:
+                logger.error(f"Could not migrate equity CSV schema: {e}")
+
+    def _load_csv(self):
+        """Load and normalise the trades CSV, fixing legacy column issues."""
+        df = pd.read_csv(self.csv_path)
+
+        # Fix legacy 'entry_datr' typo
+        if 'entry_datr' in df.columns and 'entry_date' not in df.columns:
+            df = df.rename(columns={'entry_datr': 'entry_date'})
+        elif 'entry_datr' in df.columns and 'entry_date' in df.columns:
+            mask = df['entry_date'].isna() | (df['entry_date'].astype(str).str.strip() == '')
+            df.loc[mask, 'entry_date'] = df.loc[mask, 'entry_datr']
+            df = df.drop(columns=['entry_datr'])
+
+        for col in ['exit_date', 'exit_price', 'exit_reason',
+                    'gross_pnl', 'commission', 'net_pnl', 'hold_days',
+                    'confidence', 'risk_reward_ratio', 'alpha_score', 'alpha_tier',
+                    'sentiment_score', 'sentiment_tier',
+                    'initial_stop_loss', 'trade_group_id', 'tranche']:
+            if col not in df.columns:
+                df[col] = np.nan
+
+        # ── Critical dtype fix ──────────────────────────────────────────────
+        # When every OPEN row has an empty exit_date/exit_reason, pandas'
+        # read_csv infers those columns as float64 (all-NaN). Newer pandas
+        # (3.x) then REFUSES to assign a string into a float64 column via
+        # .loc[...] and raises TypeError. That crash was happening on every
+        # single attempt to close a trade — silently swallowed by the
+        # try/except in update_trades() — which is why trades opened months
+        # ago never closed even when prices were fetched successfully.
+        # Forcing these to 'object' dtype makes string assignment always safe,
+        # regardless of pandas version or how many rows are currently empty.
+        for col in ['exit_date', 'exit_reason', 'status', 'symbol', 'side', 'entry_type',
+                    'alpha_tier', 'sentiment_tier', 'trade_group_id', 'tranche']:
+            if col in df.columns:
+                df[col] = df[col].astype(object)
+
+        return df
+
+    def _save_csv(self, df):
+        if 'entry_datr' in df.columns:
+            df = df.drop(columns=['entry_datr'])
+        df.to_csv(self.csv_path, index=False)
+
+    def _reload_state(self):
+        """Recompute realised_pnl, deployed_capital, trade_counter from CSV."""
+        try:
+            df = self._load_csv()
+            if len(df) == 0:
+                return
+
+            nums = df['trade_id'].str.extract(r'(\d+)$', expand=False).dropna()
+            self.trade_counter = int(nums.astype(int).max()) if len(nums) else 0
+
+            closed = df[df['status'] == 'CLOSED'].copy()
+            closed['net_pnl'] = pd.to_numeric(closed['net_pnl'], errors='coerce').fillna(0)
+            self.realised_pnl = closed['net_pnl'].sum()
+
+            open_t = df[df['status'] == 'OPEN'].copy()
+            open_t['entry_price']   = pd.to_numeric(open_t['entry_price'],   errors='coerce').fillna(0)
+            open_t['position_size'] = pd.to_numeric(open_t['position_size'], errors='coerce').fillna(0)
+            self.deployed_capital   = (open_t['entry_price'] * open_t['position_size']).sum()
+
+            logger.info(
+                f"✓ State loaded | Open: {len(open_t)} | Closed: {len(closed)} | "
+                f"Realised P&L: ₹{self.realised_pnl:,.2f} | "
+                f"Deployed: ₹{self.deployed_capital:,.2f} | "
+                f"Free cash: ₹{self.free_cash:,.2f}"
+            )
+        except Exception as e:
+            logger.error(f"Error loading state: {e}")
+
+    # ── Capital properties ────────────────────────────────────────────────────
+
+    @property
+    def free_cash(self):
+        """Uninvested cash available for new trades."""
+        return self.initial_equity + self.realised_pnl - self.deployed_capital
+
+    @property
+    def current_equity(self):
+        return self.free_cash   # backward compat alias
+
+    def get_capital_snapshot(self, latest_prices=None):
+        df     = self._load_csv()
+        open_t = df[df['status'] == 'OPEN'].copy()
+        closed = df[df['status'] == 'CLOSED'].copy()
+
+        open_t['entry_price']   = pd.to_numeric(open_t['entry_price'],   errors='coerce').fillna(0)
+        open_t['position_size'] = pd.to_numeric(open_t['position_size'], errors='coerce').fillna(0)
+        closed['net_pnl']       = pd.to_numeric(closed['net_pnl'],       errors='coerce').fillna(0)
+
+        deployed   = (open_t['entry_price'] * open_t['position_size']).sum()
+        realised   = closed['net_pnl'].sum()
+        free_cash  = self.initial_equity + realised - deployed
+
+        unrealised = 0.0
+        if latest_prices:
+            for _, row in open_t.iterrows():
+                sym = row['symbol']
+                if sym in latest_prices:
+                    unrealised += (float(latest_prices[sym]) - row['entry_price']) * row['position_size']
+
+        total_value = free_cash + deployed + unrealised
+
+        return {
+            'initial_equity':        self.initial_equity,
+            'realised_pnl':          round(realised,    2),
+            'deployed_capital':      round(deployed,    2),
+            'free_cash':             round(free_cash,   2),
+            'unrealised_pnl':        round(unrealised,  2),
+            'total_portfolio_value': round(total_value, 2),
+            'open_trades':           len(open_t),
+            'closed_trades':         len(closed),
+        }
+
+    # ── Trade operations ──────────────────────────────────────────────────────
+
+    def generate_trade_id(self, symbol):
+        self.trade_counter += 1
+        return f"{symbol}_{datetime.now().strftime('%Y%m%d')}_{self.trade_counter}"
+
+    def open_trade(self, symbol, entry_price, stop_loss, target_price,
+                   position_size, entry_type, confidence=None, risk_reward_ratio=None,
+                   alpha_score=None, alpha_tier=None,
+                   sentiment_score=None, sentiment_tier=None, tranches=None,
+                   extra_fields=None, allow_add=False):
+        # allow_add exists for pyramiding: profit_engine adds a SECOND unit to a
+        # position that has proved itself, which is a legitimate duplicate on the
+        # same symbol. The guard still blocks the accidental case — two
+        # independent signals opening the same name twice — because that is a
+        # concentration error, while a pyramid add is a sized, risk-reduced
+        # extension of a position that already exists.
+        """
+        Open a new paper trade with capital and slot checks.
+        Automatically reduces position size to fit available free cash.
+
+        confidence / risk_reward_ratio (optional): recorded from the signal
+        that generated this trade, so open positions can later be scored
+        fairly against new candidate signals (used by position-replacement
+        logic in the runner) instead of guessing at their quality.
+
+        alpha_score / alpha_tier (optional): recorded from alpha_engine's
+        CompositeAlphaScore for this specific entry, if the runner has that
+        layer wired in. When present, this is what replacement scoring
+        actually uses (see run_paper_trading.py's _composite_score) —
+        confidence/risk_reward_ratio remain as the fallback for trades
+        opened before the alpha engine was integrated, or on any run where
+        alpha scoring itself couldn't run (e.g. insufficient index data).
+
+        sentiment_score / sentiment_tier (optional): recorded from
+        sentiment_engine.SentimentEngine at entry — sentiment_score is the
+        0-100 cross-sectional percentile among that day's actual BUY
+        candidates (same scale as alpha_score, for easy side-by-side
+        reading), sentiment_tier its label. Purely a RECORD of what the
+        sentiment engine saw at entry, for later empirical review of
+        whether it's actually adding value — it does not feed replacement
+        scoring (alpha_score already governs that; see run_paper_trading.py
+        for how the two independently gate a trade before it ever reaches
+        this method).
+
+        tranches (optional): list of dicts, e.g.
+            [{'label': 'quick',  'size': 3, 'target_price': 145.0},
+             {'label': 'core',   'size': 3, 'target_price': 165.0},
+             {'label': 'runner', 'size': 3, 'target_price': 99999.0}]
+        sizes must sum to position_size. When given, creates MULTIPLE CSV
+        rows — one per tranche, sharing one trade_group_id — instead of a
+        single row. Every tranche shares the same entry_price/stop_loss/
+        entry_type/confidence/alpha_score (it's one trading decision split
+        into pieces with different exit points), and each is tracked and
+        exits independently via the normal update_trades()/trailing-stop
+        machinery. Slot counting, sector counting, and capital checks all
+        treat the whole group as ONE position — see get_open_symbol_count()
+        and get_open_positions_by_sector() — a 3-way tranched position still
+        only occupies one of max_open_trades' slots.
+        When tranches is None (default), behaves exactly as before: one row.
+        """
+        try:
+            df = self._load_csv()
+
+            if symbol in df[df['status'] == 'OPEN']['symbol'].values and not allow_add:
+                logger.warning(f"⚠️ {symbol} already has open trade — skipping")
+                return False
+
+            if self.get_open_symbol_count() >= self.max_open_trades:
+                logger.warning(f"⚠️ Max {self.max_open_trades} open trades reached — skipping {symbol}")
+                return False
+
+            if tranches:
+                total_tranche_size = sum(t['size'] for t in tranches)
+                if total_tranche_size != position_size:
+                    logger.error(
+                        f"Tranche sizes ({total_tranche_size}) don't sum to position_size "
+                        f"({position_size}) for {symbol} — falling back to a single untranched trade"
+                    )
+                    tranches = None
+
+            capital_needed = entry_price * position_size
+            if capital_needed > self.free_cash:
+                affordable = int(self.free_cash / entry_price)
+                if affordable < 1:
+                    logger.warning(
+                        f"⚠️ Insufficient cash for {symbol} "
+                        f"(need ₹{capital_needed:,.0f}, have ₹{self.free_cash:,.0f})"
+                    )
+                    return False
+                logger.info(f"ℹ️ {symbol}: adjusted position {position_size}→{affordable} to fit cash")
+                if tranches:
+                    # Rescale each tranche proportionally, keeping whole shares
+                    # and putting any leftover share on the largest tranche.
+                    scale = affordable / position_size
+                    scaled = [max(0, int(t['size'] * scale)) for t in tranches]
+                    leftover = affordable - sum(scaled)
+                    if scaled:
+                        scaled[scaled.index(max(scaled))] += leftover
+                    for t, s in zip(tranches, scaled):
+                        t['size'] = s
+                    tranches = [t for t in tranches if t['size'] > 0]
+                    if not tranches:
+                        logger.warning(f"⚠️ {symbol}: rescaled tranches all rounded to 0 — skipping")
+                        return False
+                position_size  = affordable
+                capital_needed = entry_price * position_size
+
+            trade_group_id = self.generate_trade_id(symbol)
+            base_fields = {
+                'symbol': symbol, 'side': 'LONG',
+                'entry_date': datetime.now().strftime('%Y-%m-%d'),
+                'entry_price': round(entry_price, 2),
+                'stop_loss': round(stop_loss, 2),
+                'initial_stop_loss': round(stop_loss, 2),   # immutable — see trailing_stop.py for why
+                'status': 'OPEN', 'exit_date': '', 'exit_price': '', 'exit_reason': '',
+                'gross_pnl': '', 'commission': '', 'net_pnl': '', 'hold_days': '',
+                'entry_type': entry_type,
+                'confidence': confidence if confidence is not None else '',
+                'risk_reward_ratio': round(risk_reward_ratio, 2) if risk_reward_ratio is not None else '',
+                'alpha_score': round(alpha_score, 1) if alpha_score is not None else '',
+                'alpha_tier': alpha_tier if alpha_tier is not None else '',
+                'sentiment_score': round(sentiment_score, 1) if sentiment_score is not None else '',
+                'sentiment_tier': sentiment_tier if sentiment_tier is not None else '',
+                'trade_group_id': trade_group_id,
+            }
+
+            if tranches:
+                new_rows = []
+                for t in tranches:
+                    new_rows.append({
+                        **base_fields,
+                        'trade_id': f"{trade_group_id}_{t['label']}",
+                        'target_price': round(t['target_price'], 2),
+                        'position_size': int(t['size']),
+                        'tranche': t['label'],
+                    })
+                new_trades = pd.DataFrame(new_rows)
+                tranche_desc = ', '.join(f"{t['label']}={t['size']}" for t in tranches)
+                logger.info(
+                    f"✅ Trade OPENED (tranched): {symbol} @ ₹{entry_price:.2f} | "
+                    f"{len(tranches)} tranches ({tranche_desc}) | "
+                    f"Deployed: ₹{capital_needed:,.0f} | Free cash left: ₹{self.free_cash - capital_needed:,.0f}"
+                )
+            else:
+                new_trades = pd.DataFrame([{
+                    **base_fields,
+                    'trade_id': trade_group_id,
+                    'target_price': round(target_price, 2),
+                    'position_size': int(position_size),
+                    'tranche': 'full',
+                }])
+                logger.info(
+                    f"✅ Trade OPENED: {symbol} @ ₹{entry_price:.2f} | "
+                    f"Size: {position_size} | Deployed: ₹{capital_needed:,.0f} | "
+                    f"Free cash left: ₹{self.free_cash - capital_needed:,.0f}"
+                )
+
+            # signal_generator v4 emits quality_score, p_win_est, time_exit_bars
+            # and the entry ADX; the calibration loop cannot fit without them,
+            # and the exit engine cannot honour a per-trade horizon without
+            # time_exit_bars. Written as part of the row rather than patched on
+            # afterwards, so a tranched entry gets them on every tranche.
+            extras = dict(extra_fields or {})
+            extras.setdefault('highest_high', round(float(entry_price), 2))
+            extras.setdefault('bars_held', 0)
+            for col, val in extras.items():
+                if col in _STACK_COLS and val is not None:
+                    new_trades[col] = val
+
+            df = pd.concat([df, new_trades], ignore_index=True)
+            self._save_csv(df)
+            self.deployed_capital += capital_needed
+            return True
+
+        except Exception as e:
+            logger.error(f"Error opening trade for {symbol}: {e}")
+            return False
+
+    def get_open_symbol_count(self):
+        """
+        Distinct SYMBOLS among OPEN trades — not row count. A position
+        split into 3 tranches (see open_trade's tranches param) is still
+        one symbol's worth of exposure and should only occupy one of
+        max_open_trades' slots, not three.
+        """
+        df = self._load_csv()
+        return df[df['status'] == 'OPEN']['symbol'].nunique()
+
+    def close_position_group(self, trade_group_id, exit_price, exit_reason):
+        """
+        Closes EVERY open tranche sharing trade_group_id at exit_price —
+        used when position-replacement logic decides to exit a whole
+        (possibly tranched) position to make room for a stronger signal.
+        Replacing just one tranche of a multi-tranche position wouldn't
+        free the slot it occupies (still the same symbol, still open), so
+        this always closes the complete group together.
+
+        Legacy positions opened before trade_group_id existed have an
+        empty value in that column — get_open_position_groups() falls back
+        to using their own trade_id as a synthetic group id for exactly
+        this case, so this method mirrors that: if nothing matches on
+        trade_group_id, try matching trade_id directly instead.
+        """
+        try:
+            df   = self._load_csv()
+            mask = (df['trade_group_id'] == trade_group_id) & (df['status'] == 'OPEN')
+            if not mask.any():
+                mask = (df['trade_id'] == trade_group_id) & (df['status'] == 'OPEN')
+            if not mask.any():
+                logger.warning(f"⚠️ close_position_group: no OPEN trades with group id {trade_group_id}")
+                return False
+
+            closed_any = False
+            for idx in df[mask].index:
+                row = df.loc[idx]
+                ok = self.close_position(row['trade_id'], exit_price, exit_reason)
+                closed_any = closed_any or ok
+                df = self._load_csv()   # re-load since close_position saved its own changes
+            return closed_any
+        except Exception as e:
+            logger.error(f"Error closing position group {trade_group_id}: {e}")
+            return False
+
+    def apply_trailing_stops(self, latest_prices, bars_by_symbol=None):
+        """
+        Ratchets stop_loss upward for every OPEN position through
+        exit_manager.compute_trailing_stop — the same function the backtester
+        and the orchestrator use, so live and simulated trading cannot drift
+        apart on what a trailing stop does.
+
+        Supplying bars_by_symbol ({symbol: OHLCV frame}) upgrades the ratchet
+        from the legacy R-tier ladder to the chandelier: the stop then trails
+        the highest high reached SINCE ENTRY minus a multiple of CURRENT ATR,
+        rather than levels frozen at entry. Without bars it degrades to the
+        original ladder, so an old caller keeps working unchanged.
+
+        Still called before update_trades, so a position closing today closes
+        against a stop that includes today's ratchet.
+
+        Positions with no entry in latest_prices are left untouched for this
+        run — skipped, never defaulted to an assumed price.
+        """
+        try:
+            df = self._load_csv()
+            open_mask = df['status'] == 'OPEN'
+            if not open_mask.any():
+                return 0
+
+            for col in ('highest_high',):
+                if col not in df.columns:
+                    df[col] = pd.Series([pd.NA] * len(df), dtype=object)
+
+            moved = 0
+            for idx in df[open_mask].index:
+                symbol = df.at[idx, 'symbol']
+                if symbol not in latest_prices:
+                    continue
+
+                entry_price = float(df.at[idx, 'entry_price'])
+                current_sl  = float(df.at[idx, 'stop_loss'])
+                price       = float(latest_prices[symbol])
+
+                initial_sl_raw = df.at[idx, 'initial_stop_loss']
+                # Graceful migration: a position opened before this column
+                # existed has no recorded initial_stop_loss. Bootstrap it from
+                # the current stop — not dangerous, just means trailing starts
+                # fresh from today for that one position rather than from its
+                # true original.
+                initial_sl = (float(initial_sl_raw)
+                              if pd.notna(initial_sl_raw) and initial_sl_raw != ''
+                              else current_sl)
+
+                bars = (bars_by_symbol or {}).get(symbol)
+                highest_high, atr_now = None, None
+                if bars is not None and len(bars) >= 20:
+                    bar_high = float(bars['high'].iloc[-1])
+                    prev_hh = df.at[idx, 'highest_high']
+                    prev_hh = float(prev_hh) if pd.notna(prev_hh) and prev_hh != '' else entry_price
+                    highest_high = max(prev_hh, bar_high)
+                    df.at[idx, 'highest_high'] = round(highest_high, 2)
+                    try:
+                        atr_series = TechnicalIndicators.calculate_atr(
+                            bars['high'], bars['low'], bars['close'], 14)
+                        atr_val = float(atr_series.iloc[-1])
+                        atr_now = atr_val if np.isfinite(atr_val) else None
+                    except Exception:
+                        atr_now = None
+
+                new_sl = compute_trailing_stop(
+                    entry_price, initial_sl, current_sl, price,
+                    highest_high=highest_high, current_atr=atr_now,
+                    position_size=int(df.at[idx, 'position_size']),
+                )
+                if new_sl > current_sl:
+                    df.at[idx, 'stop_loss'] = new_sl
+                    if pd.isna(initial_sl_raw) or initial_sl_raw == '':
+                        df.at[idx, 'initial_stop_loss'] = initial_sl   # backfill for next time
+                    moved += 1
+                    logger.info(f"  📈 {symbol}: trailing stop raised ₹{current_sl:.2f} → ₹{new_sl:.2f}")
+
+            self._save_csv(df)
+            return moved
+
+        except Exception as e:
+            logger.error(f"Error applying trailing stops: {e}")
+            return 0
+
+    def update_trades(self, symbol_prices, max_hold_days=18, bars_by_symbol=None):
+        """
+        Exit check for every open position.
+
+        ── Two corrections to the v1 logic, both of which were costing money ──
+
+        1. HOLD TIME WAS COUNTED IN CALENDAR DAYS.
+           v1 computed `(today - entry_date).days` and compared it against
+           max_hold_days, which is expressed in BARS. Fifteen calendar days is
+           about eleven trading sessions, so every time exit fired roughly a
+           third earlier than intended — on the exit that generated all of this
+           bot's profit to date (22 Time Exits, +₹2,050, against 26 stop-outs
+           at -₹2,099). It also wrote inflated hold_days into the CSV, which
+           distorted every hold-bucket analysis run off it.
+           Fixed by maintaining a `bars_held` counter incremented once per run
+           and falling back to np.busday_count for legacy rows, so the unit
+           finally matches the threshold.
+
+        2. STOPS AND TARGETS WERE CHECKED AGAINST THE CLOSE ONLY.
+           `current_price <= stop_loss` books a stop at its level even when the
+           scrip opened well below it. On an EOD system that is not a small
+           optimism: a 3% stop fills at -6% when the market opens -6%. When
+           bars_by_symbol is supplied, fills resolve through
+           exit_manager.resolve_fill — gap through the stop fills at the OPEN,
+           gap through the target likewise, and a bar that touched both
+           resolves adversely, because daily OHLC cannot say which came first.
+
+        bars_by_symbol also activates the momentum-decay exit and each trade's
+        own time_exit_bars horizon. Without it the method degrades to the
+        original close-based checks, so existing callers keep working.
+        """
+        try:
+            df = self._load_csv()
+            open_mask = df['status'] == 'OPEN'
+            if not open_mask.any():
+                logger.info("  No open trades to check")
+                return 0
+
+            for col in ('bars_held', 'health_signals_at_exit'):
+                if col not in df.columns:
+                    df[col] = pd.Series([pd.NA] * len(df), dtype=object)
+
+            engine = ExitEngine() if bars_by_symbol else None
+            trades_closed = 0
+            today = datetime.now()
+
+            for idx in df[open_mask].index:
+                symbol = df.at[idx, 'symbol']
+
+                # The session counter advances for every open position, whether
+                # or not a price arrived — a day the market traded is a day the
+                # position aged, and skipping the increment on a fetch failure
+                # would let a stale position outlive its horizon indefinitely.
+                held_raw = df.at[idx, 'bars_held']
+                bars_held = int(float(held_raw)) + 1 if pd.notna(held_raw) and held_raw != '' \
+                    else self._legacy_bars_held(df.at[idx, 'entry_date'], today)
+                df.at[idx, 'bars_held'] = bars_held
+
+                if symbol not in symbol_prices:
+                    logger.debug(f"  No price for {symbol} — exit check deferred")
+                    continue
+
+                entry_price   = float(df.at[idx, 'entry_price'])
+                stop_loss     = float(df.at[idx, 'stop_loss'])
+                target        = float(df.at[idx, 'target_price'])
+                position_size = int(df.at[idx, 'position_size'])
+                current_price = float(symbol_prices[symbol])
+
+                # Each trade carries the horizon its own geometry implied,
+                # bounded by the portfolio-wide cap. A trade whose target sits
+                # eight sessions away has no business being held eighteen.
+                own_horizon = df.at[idx, 'time_exit_bars'] if 'time_exit_bars' in df.columns else None
+                horizon = int(float(own_horizon)) if pd.notna(own_horizon) and own_horizon != '' \
+                    else int(max_hold_days)
+                horizon = min(max(horizon, 4), int(max_hold_days))
+
+                exit_reason, exit_price, health_signals = None, None, None
+                bars = (bars_by_symbol or {}).get(symbol)
+
+                if engine is not None and bars is not None and len(bars) >= 30:
+                    row = df.loc[idx].copy()
+                    row['time_exit_bars'] = horizon
+                    ev = engine.evaluate(row, bars=bars, current_price=current_price,
+                                         bars_held=bars_held)
+                    health_signals = (ev.get('health') or {}).get('n_signals')
+                    if ev['action'] == 'EXIT':
+                        exit_reason, exit_price = ev['exit_reason'], ev['exit_price']
+                else:
+                    if current_price <= stop_loss:
+                        exit_reason, exit_price = 'SL Hit', stop_loss
+                    elif current_price >= target:
+                        exit_reason, exit_price = 'Target Hit', target
+                    elif bars_held >= horizon:
+                        exit_reason, exit_price = f'Time Exit ({bars_held}/{horizon} bars)', current_price
+
+                if exit_reason is None:
+                    continue
+
+                exit_price = float(exit_price)
+                commission = round_trip_commission(entry_price, exit_price, position_size)
+                gross_pnl  = (exit_price - entry_price) * position_size
+                net_pnl    = gross_pnl - commission
+
+                df.at[idx, 'status']      = 'CLOSED'
+                df.at[idx, 'exit_date']   = today.strftime('%Y-%m-%d')
+                df.at[idx, 'exit_price']  = round(exit_price, 2)
+                df.at[idx, 'exit_reason'] = str(exit_reason)
+                df.at[idx, 'gross_pnl']   = round(gross_pnl, 2)
+                df.at[idx, 'commission']  = round(commission, 2)
+                df.at[idx, 'net_pnl']     = round(net_pnl, 2)
+                df.at[idx, 'hold_days']   = bars_held
+                if health_signals is not None:
+                    df.at[idx, 'health_signals_at_exit'] = health_signals
+
+                self.realised_pnl    += net_pnl
+                self.deployed_capital = max(0.0, self.deployed_capital
+                                            - entry_price * position_size)
+                trades_closed += 1
+
+                icon = '🟢' if net_pnl >= 0 else '🔴'
+                logger.info(
+                    f"  {icon} CLOSED {symbol} | {exit_reason} | "
+                    f"₹{entry_price:.2f}→₹{exit_price:.2f} | "
+                    f"P&L: ₹{net_pnl:+,.2f} | Held: {bars_held} sessions"
+                )
+
+            self._save_csv(df)
+            return trades_closed
+
+        except Exception as e:
+            logger.error(f"Error updating trades: {e}")
+            return 0
+
+    @staticmethod
+    def _legacy_bars_held(entry_date, today):
+        """
+        Sessions elapsed for a row opened before bars_held existed.
+
+        np.busday_count excludes weekends but not NSE holidays, so this
+        slightly overstates — roughly one session per month. That is a far
+        smaller error than the calendar-day count it replaces (~40% over a
+        three-week hold), and it self-corrects: once the row has a bars_held
+        value, the per-run counter takes over and this is never consulted again.
+        """
+        dt = _parse_date(entry_date)
+        if dt is None:
+            return 0
+        try:
+            return int(np.busday_count(dt.date(), today.date()))
+        except Exception:
+            return max((today - dt).days * 5 // 7, 0)
+
+    def close_position(self, trade_id, exit_price, exit_reason):
+        """
+        Close one specific OPEN trade by id at a given price. Used for
+        position replacement (swapping a weak/stale holding for a
+        materially better new signal when all slots are full) rather than
+        only closing on SL/target/time-exit.
+        """
+        try:
+            df   = self._load_csv()
+            mask = (df['trade_id'] == trade_id) & (df['status'] == 'OPEN')
+            if not mask.any():
+                logger.warning(f"⚠️ close_position: no OPEN trade with id {trade_id}")
+                return False
+
+            row           = df.loc[mask].iloc[0]
+            entry_price   = float(row['entry_price'])
+            position_size = int(row['position_size'])
+            entry_dt      = _parse_date(row['entry_date'])
+            hold_days     = (datetime.now() - entry_dt).days if entry_dt else 0
+
+            commission = round_trip_commission(entry_price, exit_price, position_size)
+            gross_pnl  = (exit_price - entry_price) * position_size
+            net_pnl    = gross_pnl - commission
+
+            df.loc[mask, 'status']      = 'CLOSED'
+            df.loc[mask, 'exit_date']   = datetime.now().strftime('%Y-%m-%d')
+            df.loc[mask, 'exit_price']  = round(exit_price, 2)
+            df.loc[mask, 'exit_reason'] = exit_reason
+            df.loc[mask, 'gross_pnl']   = round(gross_pnl, 2)
+            df.loc[mask, 'commission']  = round(commission, 2)
+            df.loc[mask, 'net_pnl']     = round(net_pnl, 2)
+            df.loc[mask, 'hold_days']   = hold_days
+
+            self._save_csv(df)
+            self.realised_pnl     += net_pnl
+            self.deployed_capital  = max(0.0, self.deployed_capital - entry_price * position_size)
+
+            icon = '🟢' if net_pnl >= 0 else '🔴'
+            logger.info(
+                f"  {icon} CLOSED {row['symbol']} (replaced) | {exit_reason} | "
+                f"₹{entry_price:.2f}→₹{exit_price:.2f} | P&L: ₹{net_pnl:+,.2f}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error closing position {trade_id}: {e}")
+            return False
+
+    def get_aggregate_open_risk(self):
+        """
+        Total capital currently 'at stake' across all OPEN positions — i.e.
+        the sum of (entry_price - stop_loss) * position_size for each open
+        trade, which is what you'd actually lose if every stop-loss hit at
+        once. This is the basis for portfolio-level risk budgeting: sizing
+        each trade individually as 2.5% of equity doesn't bound the total
+        book risk if 5+ trades are open simultaneously, especially when
+        several of them may be correlated (same sector/regime).
+        """
+        try:
+            df     = self._load_csv()
+            open_t = df[df['status'] == 'OPEN'].copy()
+            if len(open_t) == 0:
+                return 0.0
+            open_t['entry_price']   = pd.to_numeric(open_t['entry_price'],   errors='coerce').fillna(0)
+            open_t['stop_loss']     = pd.to_numeric(open_t['stop_loss'],     errors='coerce').fillna(0)
+            open_t['position_size'] = pd.to_numeric(open_t['position_size'], errors='coerce').fillna(0)
+            risk = ((open_t['entry_price'] - open_t['stop_loss']) * open_t['position_size']).sum()
+            return max(0.0, float(risk))
+        except Exception as e:
+            logger.error(f"Error in get_aggregate_open_risk: {e}")
+            return 0.0
+
+    def get_open_positions_by_sector(self, sector_map):
+        """
+        Returns {sector: [symbols]} for currently OPEN positions, using the
+        same SECTOR_MAP the rest of the codebase already defines. Symbols
+        not present in sector_map are grouped under their own symbol (so an
+        unmapped name never silently counts against some other sector's cap).
+
+        Deduplicated by symbol — a position split into 3 tranches (see
+        open_trade's tranches param) is one symbol's worth of sector
+        exposure, not three. Without this, a single tranched position
+        would inflate its sector's count and could trip MAX_SECTOR_EXPOSURE
+        on its own.
+        """
+        open_trades = self.get_open_trades()
+        by_sector = {}
+        seen_symbols = set()
+        for t in open_trades:
+            if t['symbol'] in seen_symbols:
+                continue
+            seen_symbols.add(t['symbol'])
+            sector = sector_map.get(t['symbol'], t['symbol'])
+            by_sector.setdefault(sector, []).append(t['symbol'])
+        return by_sector
+
+    def get_open_position_groups(self):
+        """
+        Returns one representative dict per DISTINCT open symbol, for
+        callers that need to evaluate or replace a whole position rather
+        than an individual tranche row — e.g. run_paper_trading.py's
+        position-replacement logic. All tranches sharing a trade_group_id
+        share the same entry_price/stop_loss/entry_type/confidence/
+        alpha_score by construction (one trading decision, split into
+        pieces with different exit points); position_size is summed across
+        tranches.
+
+        target_price specifically is NOT just "whichever tranche came
+        first" — tranches have deliberately different targets (quick=1.5R,
+        core=the planned target, runner=~unreachable), so an arbitrary pick
+        would badly skew any "progress toward target" calculation callers
+        do with the result (e.g. PROTECT_PROGRESS_PCT in
+        find_replaceable_position — grabbing the runner's near-infinite
+        target would make progress always look near 0%, grabbing the
+        quick tranche's near target could make progress look like 100%+
+        after a small move). The 'core' tranche represents the original,
+        planned target a non-tranched trade would have used, so that's
+        what's used here; 'full' for untranched positions; falls back to
+        whichever tranche exists if neither is present (shouldn't happen).
+
+        Each returned dict has the same shape as a get_open_trades() row,
+        plus 'position_size' replaced by the GROUP total and a new
+        'tranche_count' field.
+        """
+        open_trades = self.get_open_trades()
+        groups = {}
+        for t in open_trades:
+            raw_gid = t.get('trade_group_id')
+            # NOT a plain `or` fallback: NaN is truthy in Python
+            # (bool(float('nan')) is True), so `raw_gid or t['trade_id']`
+            # would silently keep NaN itself instead of falling through to
+            # trade_id for a legacy row with an empty trade_group_id cell —
+            # exactly the kind of NaN-vs-falsy trap this codebase has hit
+            # (and fixed) more than once already.
+            gid = raw_gid if (pd.notna(raw_gid) and raw_gid != '') else t['trade_id']
+            if gid not in groups:
+                groups[gid] = {'_tranches': [], 'position_size': 0, 'tranche_count': 0}
+            groups[gid]['_tranches'].append(t)
+            groups[gid]['position_size'] += int(t['position_size'])
+            groups[gid]['tranche_count'] += 1
+
+        result = []
+        for gid, g in groups.items():
+            tranches = g['_tranches']
+            representative = next(
+                (t for t in tranches if t.get('tranche') in ('core', 'full')),
+                tranches[0],   # fallback: shouldn't happen, but never crash over it
+            )
+            rep = dict(representative)
+            rep['position_size'] = g['position_size']
+            rep['tranche_count'] = g['tranche_count']
+            rep['group_id'] = gid   # always valid (never NaN) — use THIS for close_position_group,
+            result.append(rep)     # not rep['trade_group_id'], which may still be empty/NaN for legacy rows
+        return result
+
+    # ── Reporting ─────────────────────────────────────────────────────────────
+
+    def print_open_positions(self, latest_prices=None):
+        """
+        Print a formatted table of all open positions with live P&L.
+        Call with latest_prices dict for unrealised figures.
+        """
+        df          = self._load_csv()
+        open_trades = df[df['status'] == 'OPEN'].copy()
+
+        if len(open_trades) == 0:
+            logger.info("  No open positions")
+            return
+
+        for col in ['entry_price', 'position_size', 'stop_loss', 'target_price']:
+            open_trades[col] = pd.to_numeric(open_trades[col], errors='coerce')
+
+        today = datetime.now()
+
+        header = (f"\n  {'Symbol':<13} {'Entry':>8} {'CMP':>8} {'Qty':>5} "
+                  f"{'Capital':>9} {'Unreal P&L':>12} {'%':>7} "
+                  f"{'Hold':>5} {'SL':>8} {'Target':>8}  Status")
+        logger.info(header)
+        logger.info("  " + "─" * 110)
+
+        total_unrealised = 0.0
+        total_deployed   = 0.0
+
+        for _, t in open_trades.iterrows():
+            ep  = float(t['entry_price'])
+            ps  = int(t['position_size'])
+            sl  = float(t['stop_loss'])
+            tp  = float(t['target_price'])
+            sym = t['symbol']
+            deployed = ep * ps
+            total_deployed += deployed
+
+            entry_dt  = _parse_date(t['entry_date'])
+            hold_days = (today - entry_dt).days if entry_dt else '?'
+
+            cmp = float(latest_prices[sym]) if (latest_prices and sym in latest_prices) else None
+
+            if cmp is not None:
+                unreal         = (cmp - ep) * ps
+                pct            = (cmp - ep) / ep * 100
+                total_unrealised += unreal
+                pnl_str        = f"₹{unreal:+,.0f}"
+                pct_str        = f"{pct:+.1f}%"
+                cmp_str        = f"₹{cmp:.2f}"
+                sl_dist_pct    = (cmp - sl) / ep * 100
+                tp_dist_pct    = (tp  - cmp) / ep * 100
+                if sl_dist_pct < 1.5:
+                    status = '⚠️ NEAR SL'
+                elif tp_dist_pct < 2.0:
+                    status = '🎯 NEAR TP'
+                elif unreal > 0:
+                    status = '🟢 PROFIT'
+                else:
+                    status = '🔴 LOSS'
+            else:
+                cmp_str  = '---'
+                pnl_str  = '---'
+                pct_str  = '---'
+                status   = '❓'
+
+            logger.info(
+                f"  {sym:<13} ₹{ep:>7.2f} {cmp_str:>8} {ps:>5} "
+                f"₹{deployed:>8,.0f} {pnl_str:>12} {pct_str:>7} "
+                f"{str(hold_days):>4}d ₹{sl:>7.2f} ₹{tp:>7.2f}  {status}"
+            )
+
+        logger.info("  " + "─" * 110)
+        logger.info(f"  {'TOTAL DEPLOYED':>45}  ₹{total_deployed:>10,.0f}")
+        if latest_prices:
+            logger.info(f"  {'TOTAL UNREALISED P&L':>45}  ₹{total_unrealised:>+10,.0f}")
+
+    def get_summary(self, latest_prices=None):
+        """
+        Full performance summary — realised + unrealised + capital breakdown.
+        """
+        try:
+            df     = self._load_csv()
+            closed = df[df['status'] == 'CLOSED'].copy()
+            open_t = df[df['status'] == 'OPEN'].copy()
+
+            closed['net_pnl']       = pd.to_numeric(closed['net_pnl'],       errors='coerce').fillna(0)
+            open_t['entry_price']   = pd.to_numeric(open_t['entry_price'],   errors='coerce').fillna(0)
+            open_t['position_size'] = pd.to_numeric(open_t['position_size'], errors='coerce').fillna(0)
+
+            n_closed  = len(closed)
+            wins      = int((closed['net_pnl'] > 0).sum())
+            losses    = n_closed - wins
+            realised  = closed['net_pnl'].sum()
+            win_rate  = round(wins / n_closed * 100, 1) if n_closed else 0.0
+            avg_win   = closed.loc[closed['net_pnl'] > 0, 'net_pnl'].mean() if wins   else 0.0
+            avg_loss  = closed.loc[closed['net_pnl'] < 0, 'net_pnl'].mean() if losses else 0.0
+
+            deployed   = (open_t['entry_price'] * open_t['position_size']).sum()
+            unrealised = 0.0
+            if latest_prices:
+                for _, row in open_t.iterrows():
+                    sym = row['symbol']
+                    if sym in latest_prices:
+                        unrealised += (float(latest_prices[sym]) - row['entry_price']) * row['position_size']
+
+            free_cash   = self.initial_equity + realised - deployed
+            total_pnl   = realised + unrealised
+            total_value = free_cash + deployed + unrealised
+
+            return {
+                'initial_equity':        self.initial_equity,
+                'free_cash':             round(free_cash,   2),
+                'deployed_capital':      round(deployed,    2),
+                'unrealised_pnl':        round(unrealised,  2),
+                'realised_pnl':          round(realised,    2),
+                'total_pnl':             round(total_pnl,   2),
+                'total_portfolio_value': round(total_value, 2),
+                'open_trades':           len(open_t),
+                'closed_trades':         n_closed,
+                'wins':                  wins,
+                'losses':                losses,
+                'win_rate':              win_rate,
+                'avg_win':               round(avg_win,  2),
+                'avg_loss':              round(avg_loss, 2),
+            }
+        except Exception as e:
+            logger.error(f"Error in get_summary: {e}")
+            return {}
+
+    def log_daily_equity(self, latest_prices=None):
+        """Append a portfolio snapshot row to the equity CSV."""
+        try:
+            snap      = self.get_capital_snapshot(latest_prices)
+            df        = pd.read_csv(self.equity_csv_path) if os.path.exists(self.equity_csv_path) \
+                        else pd.DataFrame()
+            trades_df = self._load_csv()
+            closed    = trades_df[trades_df['status'] == 'CLOSED'].copy()
+            closed['net_pnl']  = pd.to_numeric(closed['net_pnl'], errors='coerce').fillna(0)
+            today_str          = datetime.now().strftime('%Y-%m-%d')
+            daily_realised     = closed[closed['exit_date'] == today_str]['net_pnl'].sum()
+
+            new_row = pd.DataFrame([{
+                'date':                  datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'free_cash':             snap['free_cash'],
+                'deployed_capital':      snap['deployed_capital'],
+                'unrealised_pnl':        snap['unrealised_pnl'],
+                'total_portfolio_value': snap['total_portfolio_value'],
+                'trades_open':           snap['open_trades'],
+                'trades_closed':         snap['closed_trades'],
+                'realised_pnl':          snap['realised_pnl'],
+                'daily_realised_pnl':    round(daily_realised, 2),
+            }])
+            df = pd.concat([df, new_row], ignore_index=True)
+            df.to_csv(self.equity_csv_path, index=False)
+        except Exception as e:
+            logger.error(f"Error logging daily equity: {e}")
+
+        
+    def get_open_trades(self):
+        df = self._load_csv()
+        return df[df['status'] == 'OPEN'].to_dict('records')
+
+    def get_closed_trades(self):
+        """
+        Returns CLOSED trades as a DataFrame (not records) with net_pnl
+        coerced numeric — the shape alpha_engine.AdaptiveWeightCalibrator
+        expects. Separate from get_open_trades()'s dict-records return
+        because the calibrator does pandas groupby/aggregation over this,
+        not per-row iteration.
+        """
+        df = self._load_csv()
+        closed = df[df['status'] == 'CLOSED'].copy()
+        closed['net_pnl'] = pd.to_numeric(closed['net_pnl'], errors='coerce')
+        return closed
+
+    # ── Maintenance ───────────────────────────────────────────────────────────
+
+    def force_close_stale(self, latest_prices, max_hold_days=15, reason_suffix=""):
+        """
+        Immediately close any OPEN trade older than max_hold_days, using the
+        best price available (live price if we have it, else the entry price
+        as a last-resort fallback so the position isn't left open forever).
+
+        This exists as a manual unstick tool: if price fetching silently fails
+        for weeks/months (as it did before the retry/bulk-fetch fix), positions
+        can sit open far past their intended hold window with no error raised.
+        Run this once after deploying the fetch fixes to clear the backlog,
+        rather than waiting for the ordinary daily update_trades() cycle.
+
+        Returns list of dicts describing what was closed.
+        """
+        try:
+            df          = self._load_csv()
+            open_trades = df[df['status'] == 'OPEN'].copy()
+            today       = datetime.now()
+            closed_info = []
+
+            for _, trade in open_trades.iterrows():
+                symbol       = trade['symbol']
+                entry_dt     = _parse_date(trade['entry_date'])
+                hold_days    = (today - entry_dt).days if entry_dt else 9999
+
+                if hold_days <= max_hold_days:
+                    continue
+
+                entry_price   = float(trade['entry_price'])
+                position_size = int(trade['position_size'])
+                stop_loss     = float(trade['stop_loss'])
+                target        = float(trade['target_price'])
+
+                if symbol in latest_prices:
+                    exit_price = float(latest_prices[symbol])
+                    reason     = f'Time Exit (maintenance, {hold_days}d held){reason_suffix}'
+                else:
+                    # No live price available even now — fall back to entry
+                    # price (net_pnl = -commission only) so the slot frees up
+                    # rather than staying stuck indefinitely. Flag it clearly.
+                    exit_price = entry_price
+                    reason     = f'Time Exit (maintenance, NO PRICE — closed flat, {hold_days}d held){reason_suffix}'
+                    logger.warning(f"⚠️ {symbol}: no live price available — closing flat at entry price")
+
+                # Respect SL/target if the live price already breached them
+                if exit_price <= stop_loss:
+                    exit_price, reason = stop_loss, f'SL Hit (maintenance, {hold_days}d held){reason_suffix}'
+                elif exit_price >= target:
+                    exit_price, reason = target, f'Target Hit (maintenance, {hold_days}d held){reason_suffix}'
+
+                commission = round_trip_commission(entry_price, exit_price, position_size)
+                gross_pnl  = (exit_price - entry_price) * position_size
+                net_pnl    = gross_pnl - commission
+
+                mask = df['trade_id'] == trade['trade_id']
+                df.loc[mask, 'status']      = 'CLOSED'
+                df.loc[mask, 'exit_date']   = today.strftime('%Y-%m-%d')
+                df.loc[mask, 'exit_price']  = round(exit_price, 2)
+                df.loc[mask, 'exit_reason'] = reason
+                df.loc[mask, 'gross_pnl']   = round(gross_pnl, 2)
+                df.loc[mask, 'commission']  = round(commission, 2)
+                df.loc[mask, 'net_pnl']     = round(net_pnl, 2)
+                df.loc[mask, 'hold_days']   = hold_days
+
+                self.realised_pnl     += net_pnl
+                self.deployed_capital  = max(0.0, self.deployed_capital - entry_price * position_size)
+
+                closed_info.append({
+                    'symbol': symbol, 'hold_days': hold_days,
+                    'entry_price': entry_price, 'exit_price': exit_price,
+                    'net_pnl': round(net_pnl, 2), 'reason': reason,
+                })
+                icon = '🟢' if net_pnl >= 0 else '🔴'
+                logger.info(
+                    f"  {icon} MAINTENANCE CLOSE {symbol} | {reason} | "
+                    f"₹{entry_price:.2f}→₹{exit_price:.2f} | P&L: ₹{net_pnl:+,.2f}"
+                )
+
+            if closed_info:
+                self._save_csv(df)
+
+            return closed_info
+
+        except Exception as e:
+            logger.error(f"Error in force_close_stale: {e}")
+            return []
+
+    def price_fetch_health_check(self, latest_prices):
+        """
+        Loud, explicit report on whether exit-checks actually had the data
+        they needed this run. Call this every run and treat a bad result as
+        a real incident, not background noise — the original 3-month-silent
+        failure happened precisely because nothing surfaced this.
+        """
+        open_trades   = self.get_open_trades()
+        held_symbols  = [t['symbol'] for t in open_trades]
+        missing       = [s for s in held_symbols if s not in latest_prices]
+
+        report = {
+            'held_positions':   len(held_symbols),
+            'prices_resolved':  len(held_symbols) - len(missing),
+            'missing_symbols':  missing,
+            'healthy':          len(missing) == 0,
+        }
+
+        if not report['healthy']:
+            logger.error(
+                f"🚨 HEALTH CHECK FAILED: {len(missing)}/{len(held_symbols)} open positions "
+                f"have NO live price this run: {missing}. Exit checks for these were SKIPPED. "
+                f"If this repeats for multiple consecutive runs, price fetching is broken "
+                f"and positions will silently stay open indefinitely."
+            )
+        else:
+            logger.info(f"✓ HEALTH CHECK OK: all {len(held_symbols)} open positions priced successfully")
+
+        return report

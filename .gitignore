@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+research_results/
+# Kite credentials — never commit
+.kite_token.json
+.env
+# A latch at the repo root is a local run's; live runs keep theirs with the
+# sleeve's state so the workflows commit it and it survives a fresh checkout.
+BREAKER_TRIPPED_*
+!state/*/BREAKER_TRIPPED_*
+.fundamentals_cache.json

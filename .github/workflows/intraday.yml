@@ -1,0 +1,70 @@
+# .github/workflows/intraday.yml — nsebot INTRADAY (MIS) session, free.
+#
+# One job holds the whole session: it starts just after the open, polls
+# Yahoo's 5-minute bars after every bar closes, runs the opening-range
+# breakout engine, and squares everything off at 15:10 IST — before 15:15,
+# and well ahead of Zerodha's own 15:20 auto-square-off and its fee. GitHub
+# caps a job at 6 hours: starting at 09:22 leaves ~8 minutes for setup and
+# the final commit before 15:12 + the cap (09:18 did not — the job would be
+# killed just before the square-off). The opening range (09:15-09:30) is
+# read from Yahoo's history, so the later start loses nothing.
+#
+# GitHub's scheduler often runs this repo's jobs hours late, which for an
+# intraday session means a short or missed day. A free external trigger
+# (cron-job.org -> workflow_dispatch, docs/SCHEDULING.md) starts it on time;
+# the two scheduled slots below are the fallback, and the first step stops a
+# slot within seconds when it lands outside the session window.
+#
+# Sizing note: no intraday variant has passed out-of-sample yet
+# (docs/RESEARCH.md), so the Kelly sizer trades the 0.5% risk floor and this
+# job is, honestly, live data collection until its own trades say otherwise.
+#
+# State is committed at the end of the session (and on failure), so the
+# breaker counters and trade journal persist between days.
+
+name: NSE Intraday Bot
+
+on:
+  schedule:
+    # 09:22 IST, plus one retry in case GitHub delays or drops it. A retry that arrives while
+    # a session is running waits in this bot's queue, then finds the session over and stops.
+    - cron: '52 3 * * 1-5'       # 09:22 IST
+    - cron: '52 5 * * 1-5'       # 11:22 IST retry
+  workflow_dispatch:
+
+concurrency:
+  group: nsebot-intraday         # one queue per bot (see main.yml)
+  cancel-in-progress: false
+
+jobs:
+  intraday:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360             # GitHub's maximum for a hosted runner
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Anything to do?             # seconds; skips the rest when the work is already done
+        id: gate
+        run: python3 scripts/should_run.py intraday
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Intraday session (until 15:10 square-off)
+        if: steps.gate.outputs.run == 'true'
+        env:
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+          NSEBOT_BROKER: paper
+        run: python -m nsebot intraday
+      - name: Commit state and redraw the README progress chart
+        if: always() && steps.gate.outputs.run == 'true'
+        run: bash scripts/commit_state.sh "📈 intraday $(TZ=Asia/Kolkata date +'%Y-%m-%d') [skip ci]"

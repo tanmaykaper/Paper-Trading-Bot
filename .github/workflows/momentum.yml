@@ -1,0 +1,64 @@
+# .github/workflows/momentum.yml — nsebot MOMENTUM (CNC) sleeve, paper
+#
+# Runs after the swing cycle on weekdays. Fills the last rebalance's orders at
+# today's open, marks the book to today's closes, and every 5 sessions ranks
+# every NSE-listed stock by 12-1 momentum (docs/RESEARCH.md, round 6) and
+# queues the next open's sales and buys. Rebalance days download NSE's equity
+# list and ~2,600 symbols from Yahoo (a few minutes); other days fetch only
+# the holdings. Commits state/momentum/ — ledger, journals and the saved NSE
+# list the next run falls back on if NSE is unreachable.
+#
+# Free: Yahoo daily bars, NSE's public equity list, paper broker.
+#
+# GitHub's scheduler runs this repo's jobs hours late and drops some
+# (docs/SCHEDULING.md), so the cycle is scheduled every hour through the
+# night. The first step checks state/momentum/ and stops within seconds when
+# the session is already processed; the first slot that gets through does the
+# work.
+
+name: nsebot momentum
+
+on:
+  schedule:
+    # Same reasoning as main.yml: hourly at :07 from 17:37 IST through the night, twice
+    # before the next open; the gate step makes every slot after the first a ~10 s no-op.
+    - cron: '7 12-19 * * 1-5'    # 17:37, 18:37 ... 00:37 IST
+    - cron: '7 21,23 * * 1-5'    # 02:37, 04:37 IST
+    - cron: '7 1,3 * * 2-6'      # 06:37, 08:37 IST next morning, before the open
+  workflow_dispatch:
+
+concurrency:
+  group: nsebot-momentum         # one queue per bot (see main.yml); each bot writes only its own
+  cancel-in-progress: false      # state/<mode>/ and the commit step rebases and retries the push
+
+jobs:
+  momentum:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Anything to do?             # seconds; skips the rest when the work is already done
+        id: gate
+        run: python3 scripts/should_run.py momentum
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Momentum end-of-day cycle
+        if: steps.gate.outputs.run == 'true'
+        env:
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        run: python -m nsebot momentum
+      - name: Commit state and redraw the README progress chart
+        if: always() && steps.gate.outputs.run == 'true'
+        run: bash scripts/commit_state.sh "📈 momentum EOD $(TZ=Asia/Kolkata date +'%Y-%m-%d') [skip ci]"
