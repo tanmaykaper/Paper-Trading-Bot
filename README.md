@@ -3,24 +3,24 @@
 <!-- progress:start — drawn by scripts/progress.py after every bot run; edits here are overwritten -->
 ## How the money is doing
 
-**₹1,45,132 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−3.25%), at the close on 12 Oct 2026.
+**₹1,44,883 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−3.41%), at the close on 13 Oct 2026.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/progress/chart-dark.svg">
-  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,45,132 on 12 Oct 2026." src="docs/progress/chart-light.svg">
+  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,44,883 on 13 Oct 2026." src="docs/progress/chart-light.svg">
 </picture>
 
 That is what the three bots' paper trades would have left you with as real trades, had you sold everything at that close: after Zerodha's charges and slippage on every trade, the cost of selling the open positions, and income tax on the profit.
 
-| Bot | Since | Value | Return | Change on 12 Oct | Closed trades | Open now |
+| Bot | Since | Value | Return | Change on 13 Oct | Closed trades | Open now |
 |---|---|---|---|---|---|---|
-| Momentum | 5 Oct 2026 | ₹45,418 | −9.16% | +₹636 | 0 | 10 |
+| Momentum | 5 Oct 2026 | ₹45,418 | −9.16% | ₹0 | 0 | 10 |
 | Swing | 5 Oct 2026 | ₹50,000 | 0.00% | ₹0 | 0 | 0 |
-| Intraday | 9 Oct 2026 | ₹49,931 | −0.14% | ₹0 | 8 | 1 |
-| **All three** | | **₹1,45,349** | **−3.10%** | +₹636 | 8 | 11 |
+| Intraday | 9 Oct 2026 | ₹49,682 | −0.64% | −₹249 | 15 | 0 |
+| **All three** | | **₹1,45,100** | **−3.27%** | −₹249 | 15 | 10 |
 | Selling the open positions | | −₹217 | | | | |
 | Tax on the profit | | ₹0 | | | | |
-| **In your pocket** | | **₹1,45,132** | **−3.25%** | | | |
+| **In your pocket** | | **₹1,44,883** | **−3.41%** | | | |
 
 <sub>Value is cash plus open positions at the close, after the charges already paid. Tax is 20.8% on delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>
 <!-- progress:end -->

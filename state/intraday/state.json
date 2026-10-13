@@ -1,52 +1,30 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 24532.194708881987,
- "positions": [
-  {
-   "symbol": "JSWSTEEL",
-   "mode": "intraday",
-   "side": "SHORT",
-   "qty": 108,
-   "entry_price": 1168.2,
-   "initial_stop": 1176.2,
-   "stop": 1176.2,
-   "entry_time": "2026-10-12 12:10:00+05:30",
-   "atr": 2.5167923821821545,
-   "bars_held": 27,
-   "best_price": 1166.800048828125,
-   "meta": {
-    "trade_id": "I20261012-JSWSTEEL-9",
-    "margin": 25233.120000000003,
-    "entry_costs": 59.7118750256,
-    "trigger": "orb_vwap",
-    "score": 55.45,
-    "last_bar": "2026-10-12 14:20:00+05:30",
-    "order_id": "PAPER-JSWSTEEL-5"
-   }
-  }
- ],
+ "cash": 49681.9984646308,
+ "positions": [],
  "pending": [],
  "breakers": {
-  "consecutive_losses": 2,
+  "consecutive_losses": 0,
   "cooldown_left": 0,
   "reduced": false,
-  "reduced_left": 0,
-  "session": "2026-10-12",
-  "trades_today": 5,
-  "realised_today": -105.6439382687056,
+  "reduced_left": 1,
+  "session": "2026-10-13",
+  "trades_today": 6,
+  "realised_today": 283.4613712392047,
   "peak_equity": 51361.848931443434,
   "halted_for_session": false,
   "latched": false
  },
  "last_processed": null,
  "traded_today": [
-  "SBIN",
-  "NTPC",
-  "HCLTECH",
-  "HEROMOTOCO",
-  "JSWSTEEL"
+  "HINDUNILVR",
+  "SUNPHARMA",
+  "MARUTI",
+  "TCS",
+  "HAL",
+  "NTPC"
  ],
- "trade_seq": 9,
- "session": "2026-10-12"
+ "trade_seq": 15,
+ "session": "2026-10-13"
 }
