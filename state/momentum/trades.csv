@@ -1,0 +1,2 @@
+trade_id,mode,symbol,side,qty,entry_time,entry_price,initial_stop,exit_time,exit_price,exit_reason,bars_held,gross_pnl,costs,net_pnl,net_r,trigger,score
+M20261006-BHAGYANGR-5,momentum,BHAGYANGR,LONG,12,2026-10-06 00:00:00,418.15,0.0,2026-10-13 00:00:00,47.82,rebalance: no longer eligible,0,-4443.96,21.89,-4465.85,-0.89,momentum_12_1,3.1775
