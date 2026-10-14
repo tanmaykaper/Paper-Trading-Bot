@@ -1,7 +1,7 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 49681.9984646308,
+ "cash": 49296.53773024999,
  "positions": [],
  "pending": [],
  "breakers": {
@@ -9,22 +9,22 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 1,
-  "session": "2026-10-13",
+  "session": "2026-10-14",
   "trades_today": 6,
-  "realised_today": 283.4613712392047,
+  "realised_today": -385.4607343808049,
   "peak_equity": 51361.848931443434,
   "halted_for_session": false,
   "latched": false
  },
  "last_processed": null,
  "traded_today": [
-  "HINDUNILVR",
-  "SUNPHARMA",
-  "MARUTI",
-  "TCS",
-  "HAL",
-  "NTPC"
+  "PERSISTENT",
+  "DRREDDY",
+  "M&M",
+  "ULTRACEMCO",
+  "VEDL",
+  "HINDALCO"
  ],
- "trade_seq": 15,
- "session": "2026-10-13"
+ "trade_seq": 21,
+ "session": "2026-10-14"
 }
