@@ -3,24 +3,24 @@
 <!-- progress:start — drawn by scripts/progress.py after every bot run; edits here are overwritten -->
 ## How the money is doing
 
-**₹1,43,988 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−4.01%), at the close on 14 Oct 2026.
+**₹1,43,958 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−4.03%), at the close on 14 Oct 2026.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/progress/chart-dark.svg">
-  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,43,988 on 14 Oct 2026." src="docs/progress/chart-light.svg">
+  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,43,958 on 14 Oct 2026." src="docs/progress/chart-light.svg">
 </picture>
 
 That is what the three bots' paper trades would have left you with as real trades, had you sold everything at that close: after Zerodha's charges and slippage on every trade, the cost of selling the open positions, and income tax on the profit.
 
 | Bot | Since | Value | Return | Change on 14 Oct | Closed trades | Open now |
 |---|---|---|---|---|---|---|
-| Momentum | 5 Oct 2026 | ₹44,912 | −10.18% | ₹0 | 1 | 10 |
+| Momentum | 5 Oct 2026 | ₹44,882 | −10.24% | −₹30 | 1 | 10 |
 | Swing | 5 Oct 2026 | ₹50,000 | 0.00% | ₹0 | 0 | 0 |
 | Intraday | 9 Oct 2026 | ₹49,297 | −1.41% | −₹385 | 21 | 0 |
-| **All three** | | **₹1,44,209** | **−3.86%** | −₹385 | 22 | 10 |
+| **All three** | | **₹1,44,179** | **−3.88%** | −₹416 | 22 | 10 |
 | Selling the open positions | | −₹221 | | | | |
 | Tax on the profit | | ₹0 | | | | |
-| **In your pocket** | | **₹1,43,988** | **−4.01%** | | | |
+| **In your pocket** | | **₹1,43,958** | **−4.03%** | | | |
 
 <sub>Value is cash plus open positions at the close, after the charges already paid. Tax is 20.8% on delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>
 <!-- progress:end -->
