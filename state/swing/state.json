@@ -3,21 +3,43 @@
  "initial_cash": 50000.0,
  "cash": 50000.0,
  "positions": [],
- "pending": [],
+ "pending": [
+  {
+   "spec": {
+    "symbol": "RBLBANK",
+    "side": "LONG",
+    "qty": 26,
+    "product": "CNC",
+    "ref_price": 374.1499938964844,
+    "stop": 336.45,
+    "signal_time": "2026-10-15 00:00:00",
+    "tag": "nbs1015RBLBANK",
+    "meta": {
+     "atr": 12.559577397465949,
+     "trigger": "dip_reversion",
+     "score": 3.467,
+     "risk_pct": 0.01959,
+     "binding": "target notional"
+    }
+   },
+   "order_id": "PAPER-RBLBANK-1",
+   "placed": "2026-10-15 00:00:00"
+  }
+ ],
  "breakers": {
   "consecutive_losses": 0,
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-14",
+  "session": "2026-10-15",
   "trades_today": 0,
   "realised_today": 0.0,
   "peak_equity": 50000.0,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-14",
+ "last_processed": "2026-10-15",
  "traded_today": [],
  "trade_seq": 0,
- "starved_sessions": 1
+ "starved_sessions": 0
 }
