@@ -1,5 +1,5 @@
 {
-"fetched": "2026-10-12",
+"fetched": "2026-10-19",
 "source": "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
 "series": [
 "EQ",
@@ -816,7 +816,6 @@
 "GERMAN",
 "GESHIP",
 "GFLLIMITED",
-"GFSTEELS",
 "GHCL",
 "GHCLTEXTIL",
 "GICHSGFIN",
@@ -1557,7 +1556,6 @@
 "NAM-INDIA",
 "NARMADA",
 "NATCAPSUQ",
-"NATCO-RE",
 "NATCOPHARM",
 "NATHBIOGEN",
 "NATIONALUM",
@@ -2364,6 +2362,7 @@
 "TIIL",
 "TIINDIA",
 "TIJARIA",
+"TIKONA",
 "TIL",
 "TIMETECHNO",
 "TIMEX",
