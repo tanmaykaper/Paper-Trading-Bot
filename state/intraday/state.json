@@ -1,7 +1,7 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 49274.88934888929,
+ "cash": 49370.333397418006,
  "positions": [],
  "pending": [],
  "breakers": {
@@ -9,20 +9,20 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 2,
-  "session": "2026-10-16",
+  "session": "2026-10-19",
   "trades_today": 4,
-  "realised_today": -564.7071003528047,
+  "realised_today": 95.44404852869553,
   "peak_equity": 51361.848931443434,
-  "halted_for_session": true,
+  "halted_for_session": false,
   "latched": false
  },
  "last_processed": null,
  "traded_today": [
   "ICICIBANK",
-  "GRASIM",
-  "DIXON",
-  "PERSISTENT"
+  "SUNPHARMA",
+  "TATAPOWER",
+  "BAJAJFINSV"
  ],
- "trade_seq": 31,
- "session": "2026-10-16"
+ "trade_seq": 35,
+ "session": "2026-10-19"
 }
