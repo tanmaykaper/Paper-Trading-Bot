@@ -9,20 +9,15 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 2,
-  "session": "2026-10-19",
-  "trades_today": 4,
-  "realised_today": 95.44404852869553,
+  "session": "2026-10-20",
+  "trades_today": 0,
+  "realised_today": 0.0,
   "peak_equity": 51361.848931443434,
   "halted_for_session": false,
   "latched": false
  },
  "last_processed": null,
- "traded_today": [
-  "ICICIBANK",
-  "SUNPHARMA",
-  "TATAPOWER",
-  "BAJAJFINSV"
- ],
+ "traded_today": [],
  "trade_seq": 35,
- "session": "2026-10-19"
+ "session": "2026-10-20"
 }
