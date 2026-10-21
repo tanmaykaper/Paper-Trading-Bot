@@ -1,7 +1,7 @@
 {
  "mode": "momentum",
  "initial_cash": 50000.0,
- "cash": 895.5143513698558,
+ "cash": 255.1641475530558,
  "positions": [
   {
    "symbol": "CUPID",
@@ -23,9 +23,9 @@
     "score": 5.3241,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-CUPID-1",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 353.70001220703125,
-    "anchor_close": 336.29998779296875
+    "anchor_date": "2026-10-21",
+    "anchor_open": 336.5,
+    "anchor_close": 340.75
    }
   },
   {
@@ -48,9 +48,9 @@
     "score": 4.795,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-STLTECH-2",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 855.0,
-    "anchor_close": 887.25
+    "anchor_date": "2026-10-21",
+    "anchor_open": 903.0,
+    "anchor_close": 842.9000244140625
    }
   },
   {
@@ -73,9 +73,9 @@
     "score": 3.6712,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-SIGMAADV-3",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 950.0,
-    "anchor_close": 911.0999755859375
+    "anchor_date": "2026-10-21",
+    "anchor_open": 910.0,
+    "anchor_close": 865.5999755859375
    }
   },
   {
@@ -98,34 +98,9 @@
     "score": 3.2975,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-BLISSGVS-4",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 662.5,
-    "anchor_close": 627.0499877929688
-   }
-  },
-  {
-   "symbol": "VENUSREM",
-   "mode": "momentum",
-   "side": "LONG",
-   "qty": 2,
-   "entry_price": 1808.9,
-   "initial_stop": 0.0,
-   "stop": 0.0,
-   "entry_time": "2026-10-06 00:00:00",
-   "atr": 0.0,
-   "bars_held": 0,
-   "best_price": 1808.9,
-   "meta": {
-    "trade_id": "M20261006-VENUSREM-6",
-    "margin": 3617.8,
-    "entry_costs": 4.291528422800001,
-    "trigger": "momentum_12_1",
-    "score": 2.6264,
-    "last_bar": "2026-10-05 00:00:00",
-    "order_id": "PAPER-VENUSREM-6",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 1650.0,
-    "anchor_close": 1593.199951171875
+    "anchor_date": "2026-10-21",
+    "anchor_open": 627.0499877929688,
+    "anchor_close": 612.0999755859375
    }
   },
   {
@@ -148,9 +123,9 @@
     "score": 2.5397,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-INDSWFTLAB-7",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 358.8500061035156,
-    "anchor_close": 351.8999938964844
+    "anchor_date": "2026-10-21",
+    "anchor_open": 353.0,
+    "anchor_close": 342.5
    }
   },
   {
@@ -173,9 +148,9 @@
     "score": 1.9902,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-HFCL-8",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 260.0,
-    "anchor_close": 268.80999755859375
+    "anchor_date": "2026-10-21",
+    "anchor_open": 282.25,
+    "anchor_close": 264.7799987792969
    }
   },
   {
@@ -198,9 +173,9 @@
     "score": 1.913,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-AEROFLEX-9",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 526.0499877929688,
-    "anchor_close": 505.20001220703125
+    "anchor_date": "2026-10-21",
+    "anchor_open": 509.95001220703125,
+    "anchor_close": 488.95001220703125
    }
   },
   {
@@ -223,9 +198,9 @@
     "score": 1.8978,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-ATHERENERG-10",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 1470.0,
-    "anchor_close": 1459.0
+    "anchor_date": "2026-10-21",
+    "anchor_open": 1467.199951171875,
+    "anchor_close": 1447.199951171875
    }
   },
   {
@@ -248,59 +223,55 @@
     "score": 2.1416,
     "last_bar": "2026-10-12 00:00:00",
     "order_id": "PAPER-SAKAR-1",
-    "anchor_date": "2026-10-19",
-    "anchor_open": 952.5,
-    "anchor_close": 923.2000122070312
+    "anchor_date": "2026-10-21",
+    "anchor_open": 927.7999877929688,
+    "anchor_close": 904.7999877929688
+   }
+  },
+  {
+   "symbol": "TBZ",
+   "mode": "momentum",
+   "side": "LONG",
+   "qty": 5,
+   "entry_price": 760.4,
+   "initial_stop": 0.0,
+   "stop": 0.0,
+   "entry_time": "2026-10-21 00:00:00",
+   "atr": 0.0,
+   "bars_held": 0,
+   "best_price": 760.4,
+   "meta": {
+    "trade_id": "M20261021-TBZ-12",
+    "margin": 3802.0,
+    "entry_costs": 4.510031252,
+    "trigger": "momentum_12_1",
+    "score": 2.0933,
+    "last_bar": "2026-10-19 00:00:00",
+    "order_id": "PAPER-TBZ-1",
+    "anchor_date": "2026-10-21",
+    "anchor_open": 760.0,
+    "anchor_close": 730.2999877929688
    }
   }
  ],
- "pending": [
-  {
-   "action": "SELL",
-   "symbol": "VENUSREM",
-   "qty": 2,
-   "ref_price": 1593.199951171875,
-   "signal_time": "2026-10-19 00:00:00",
-   "reason": "no longer eligible"
-  },
-  {
-   "action": "BUY",
-   "spec": {
-    "symbol": "TBZ",
-    "side": "LONG",
-    "qty": 5,
-    "product": "CNC",
-    "ref_price": 768.2000122070312,
-    "stop": 0.0,
-    "signal_time": "2026-10-19 00:00:00",
-    "tag": "nbm1019TBZ",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 2.0933,
-     "rank": 8
-    }
-   },
-   "order_id": "PAPER-TBZ-1",
-   "placed": "2026-10-19 00:00:00"
-  }
- ],
+ "pending": [],
  "breakers": {
-  "consecutive_losses": 1,
+  "consecutive_losses": 2,
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-19",
-  "trades_today": 0,
-  "realised_today": 0.0,
+  "session": "2026-10-21",
+  "trades_today": 1,
+  "realised_today": -455.9317009876,
   "peak_equity": 51018.01948813152,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-19",
+ "last_processed": "2026-10-21",
  "traded_today": [],
- "trade_seq": 11,
+ "trade_seq": 12,
  "low_eligible_runs": 0,
  "last_eligible": 871,
  "starved_rebalances": 0,
- "sessions_since_rebalance": 0
+ "sessions_since_rebalance": 1
 }
