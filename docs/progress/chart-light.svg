@@ -1,31 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="320" viewBox="0 0 800 320" role="img" aria-labelledby="t" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
-<title id="t">Money in your pocket after charges and tax: ₹1,42,086 on 19 Oct 2026, −5.28% on the ₹1,50,000 put in on 5 Oct 2026.</title>
+<title id="t">Money in your pocket after charges and tax: ₹1,40,541 on 21 Oct 2026, −6.31% on the ₹1,50,000 put in on 5 Oct 2026.</title>
 <line x1="86" x2="104" y1="15" y2="15" stroke="#2a78d6" stroke-width="2" stroke-linecap="round"/>
 <text x="112" y="19" font-size="12" fill="#52514e">In your pocket, after charges and tax</text>
 <line x1="399" x2="417" y1="15" y2="15" stroke="#a8a79f" stroke-width="1" stroke-linecap="round"/>
 <text x="425" y="19" font-size="12" fill="#52514e">Put in: ₹1,50,000</text>
 <line x1="86" x2="688" y1="282.0" y2="282.0" stroke="#e1e0d9" stroke-width="1"/>
 <text x="76" y="286.0" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,40,000</text>
-<line x1="86" x2="688" y1="234.8" y2="234.8" stroke="#e1e0d9" stroke-width="1"/>
-<text x="76" y="238.8" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,42,500</text>
-<line x1="86" x2="688" y1="187.6" y2="187.6" stroke="#e1e0d9" stroke-width="1"/>
-<text x="76" y="191.6" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,45,000</text>
-<line x1="86" x2="688" y1="140.4" y2="140.4" stroke="#e1e0d9" stroke-width="1"/>
-<text x="76" y="144.4" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,47,500</text>
-<line x1="86" x2="688" y1="93.2" y2="93.2" stroke="#e1e0d9" stroke-width="1"/>
-<text x="76" y="97.2" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,50,000</text>
+<line x1="86" x2="688" y1="203.3" y2="203.3" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76" y="207.3" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,45,000</text>
+<line x1="86" x2="688" y1="124.7" y2="124.7" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76" y="128.7" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,50,000</text>
 <line x1="86" x2="688" y1="46.0" y2="46.0" stroke="#e1e0d9" stroke-width="1"/>
-<text x="76" y="50.0" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,52,500</text>
-<line x1="86" x2="688" y1="93.2" y2="93.2" stroke="#a8a79f" stroke-width="1"/>
+<text x="76" y="50.0" text-anchor="end" font-size="12" fill="#52514e" style="font-variant-numeric:tabular-nums">₹1,55,000</text>
+<line x1="86" x2="688" y1="124.7" y2="124.7" stroke="#a8a79f" stroke-width="1"/>
 <text x="86.0" y="308" text-anchor="start" font-size="12" fill="#52514e">5 Oct 2026</text>
-<text x="206.4" y="308" text-anchor="middle" font-size="12" fill="#52514e">7 Oct</text>
-<text x="326.8" y="308" text-anchor="middle" font-size="12" fill="#52514e">9 Oct</text>
-<text x="447.2" y="308" text-anchor="middle" font-size="12" fill="#52514e">13 Oct</text>
-<text x="567.6" y="308" text-anchor="middle" font-size="12" fill="#52514e">15 Oct</text>
-<text x="688.0" y="308" text-anchor="end" font-size="12" fill="#52514e">19 Oct</text>
-<path d="M86.0,282.0 L86.0,93.2 L146.2,88.1 L206.4,81.3 L266.6,90.7 L326.8,197.1 L387.0,185.1 L447.2,199.4 L507.4,207.3 L567.6,224.7 L627.8,226.5 L688.0,242.6 L688.0,282.0 Z" fill="#2a78d6" fill-opacity="0.08"/>
-<polyline points="86.0,93.2 146.2,88.1 206.4,81.3 266.6,90.7 326.8,197.1 387.0,185.1 447.2,199.4 507.4,207.3 567.6,224.7 627.8,226.5 688.0,242.6" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="688.0" cy="242.6" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-<text x="700.0" y="242.6" font-size="14" font-weight="600" fill="#0b0b0b">₹1,42,086</text>
-<text x="700.0" y="259.6" font-size="12" fill="#52514e">−5.28%</text>
+<text x="195.5" y="308" text-anchor="middle" font-size="12" fill="#52514e">7 Oct</text>
+<text x="304.9" y="308" text-anchor="middle" font-size="12" fill="#52514e">9 Oct</text>
+<text x="469.1" y="308" text-anchor="middle" font-size="12" fill="#52514e">14 Oct</text>
+<text x="578.5" y="308" text-anchor="middle" font-size="12" fill="#52514e">16 Oct</text>
+<text x="688.0" y="308" text-anchor="end" font-size="12" fill="#52514e">21 Oct</text>
+<path d="M86.0,282.0 L86.0,124.7 L140.7,120.4 L195.5,114.8 L250.2,122.6 L304.9,211.3 L359.6,201.3 L414.4,213.2 L469.1,219.7 L523.8,234.2 L578.5,235.7 L633.3,249.2 L688.0,273.5 L688.0,282.0 Z" fill="#2a78d6" fill-opacity="0.08"/>
+<polyline points="86.0,124.7 140.7,120.4 195.5,114.8 250.2,122.6 304.9,211.3 359.6,201.3 414.4,213.2 469.1,219.7 523.8,234.2 578.5,235.7 633.3,249.2 688.0,273.5" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="688.0" cy="273.5" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="700.0" y="264.0" font-size="14" font-weight="600" fill="#0b0b0b">₹1,40,541</text>
+<text x="700.0" y="281.0" font-size="12" fill="#52514e">−6.31%</text>
 </svg>
