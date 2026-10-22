@@ -1,7 +1,7 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 47826.08487438729,
+ "cash": 47346.6608327549,
  "positions": [],
  "pending": [],
  "breakers": {
@@ -9,20 +9,19 @@
   "cooldown_left": 0,
   "reduced": true,
   "reduced_left": 2,
-  "session": "2026-10-21",
-  "trades_today": 4,
-  "realised_today": -1544.2485230307097,
+  "session": "2026-10-22",
+  "trades_today": 3,
+  "realised_today": -479.42404163239803,
   "peak_equity": 51361.848931443434,
   "halted_for_session": true,
   "latched": false
  },
  "last_processed": null,
  "traded_today": [
-  "NAUKRI",
-  "DLF",
-  "ICICIBANK",
-  "SHRIRAMFIN"
+  "HDFCBANK",
+  "DRREDDY",
+  "BPCL"
  ],
- "trade_seq": 39,
- "session": "2026-10-21"
+ "trade_seq": 42,
+ "session": "2026-10-22"
 }
