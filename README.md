@@ -3,11 +3,11 @@
 <!-- progress:start — drawn by scripts/progress.py after every bot run; edits here are overwritten -->
 ## How the money is doing
 
-**₹1,38,610 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−7.59%), at the close on 22 Oct 2026.
+**₹1,38,667 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−7.56%), at the close on 22 Oct 2026.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/progress/chart-dark.svg">
-  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,38,610 on 22 Oct 2026." src="docs/progress/chart-light.svg">
+  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,38,667 on 22 Oct 2026." src="docs/progress/chart-light.svg">
 </picture>
 
 That is what the three bots' paper trades would have left you with as real trades, had you sold everything at that close: after Zerodha's charges and slippage on every trade, the cost of selling the open positions, and income tax on the profit.
@@ -15,12 +15,12 @@ That is what the three bots' paper trades would have left you with as real trade
 | Bot | Since | Value | Return | Change on 22 Oct | Closed trades | Open now |
 |---|---|---|---|---|---|---|
 | Momentum | 5 Oct 2026 | ₹41,980 | −16.04% | ₹0 | 2 | 10 |
-| Swing | 5 Oct 2026 | ₹49,531 | −0.94% | ₹0 | 0 | 1 |
+| Swing | 5 Oct 2026 | ₹49,588 | −0.82% | +₹57 | 0 | 1 |
 | Intraday | 9 Oct 2026 | ₹47,347 | −5.31% | −₹479 | 42 | 0 |
-| **All three** | | **₹1,38,857** | **−7.43%** | −₹479 | 44 | 11 |
+| **All three** | | **₹1,38,914** | **−7.39%** | −₹422 | 44 | 11 |
 | Selling the open positions | | −₹247 | | | | |
 | Tax on the profit | | ₹0 | | | | |
-| **In your pocket** | | **₹1,38,610** | **−7.59%** | | | |
+| **In your pocket** | | **₹1,38,667** | **−7.56%** | | | |
 
 <sub>Value is cash plus open positions at the close, after the charges already paid. Tax is 20.8% on delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>
 <!-- progress:end -->
