@@ -13,7 +13,7 @@
    "stop": 336.45,
    "entry_time": "2026-10-16 00:00:00",
    "atr": 12.559577397465949,
-   "bars_held": 3,
+   "bars_held": 4,
    "best_price": 382.25,
    "meta": {
     "trade_id": "S20261016-RBLBANK-1",
@@ -21,26 +21,48 @@
     "entry_costs": 11.6088821264,
     "trigger": "dip_reversion",
     "score": 3.467,
-    "last_bar": "2026-10-21 00:00:00",
+    "last_bar": "2026-10-22 00:00:00",
     "order_id": "PAPER-RBLBANK-1"
    }
   }
  ],
- "pending": [],
+ "pending": [
+  {
+   "spec": {
+    "symbol": "APOLLO",
+    "side": "LONG",
+    "qty": 25,
+    "product": "CNC",
+    "ref_price": 388.70001220703125,
+    "stop": 337.5,
+    "signal_time": "2026-10-22 00:00:00",
+    "tag": "nbs1022APOLLO",
+    "meta": {
+     "atr": 17.059882419768734,
+     "trigger": "dip_reversion",
+     "score": 2.362,
+     "risk_pct": 0.0258,
+     "binding": "target notional"
+    }
+   },
+   "order_id": "PAPER-APOLLO-1",
+   "placed": "2026-10-22 00:00:00"
+  }
+ ],
  "breakers": {
   "consecutive_losses": 0,
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-21",
+  "session": "2026-10-22",
   "trades_today": 0,
   "realised_today": 0.0,
   "peak_equity": 50036.4911178736,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-21",
+ "last_processed": "2026-10-22",
  "traded_today": [],
  "trade_seq": 1,
- "starved_sessions": 1
+ "starved_sessions": 0
 }
