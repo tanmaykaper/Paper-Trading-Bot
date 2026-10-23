@@ -1,27 +1,30 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 47346.6608327549,
+ "cash": 47055.6083785141,
  "positions": [],
  "pending": [],
  "breakers": {
-  "consecutive_losses": 1,
+  "consecutive_losses": 2,
   "cooldown_left": 0,
-  "reduced": true,
-  "reduced_left": 2,
-  "session": "2026-10-22",
-  "trades_today": 3,
-  "realised_today": -479.42404163239803,
+  "reduced": false,
+  "reduced_left": 1,
+  "session": "2026-10-23",
+  "trades_today": 6,
+  "realised_today": -291.0524542408002,
   "peak_equity": 51361.848931443434,
-  "halted_for_session": true,
+  "halted_for_session": false,
   "latched": false
  },
  "last_processed": null,
  "traded_today": [
-  "HDFCBANK",
-  "DRREDDY",
-  "BPCL"
+  "ADANIENT",
+  "HAL",
+  "TMPV",
+  "INDUSINDBK",
+  "PERSISTENT",
+  "CHOLAFIN"
  ],
- "trade_seq": 42,
- "session": "2026-10-22"
+ "trade_seq": 48,
+ "session": "2026-10-23"
 }
