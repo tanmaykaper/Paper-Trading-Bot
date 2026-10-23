@@ -1,7 +1,7 @@
 {
  "mode": "swing",
  "initial_cash": 50000.0,
- "cash": 40201.9911178736,
+ "cash": 30467.9580355886,
  "positions": [
   {
    "symbol": "RBLBANK",
@@ -13,7 +13,7 @@
    "stop": 336.45,
    "entry_time": "2026-10-16 00:00:00",
    "atr": 12.559577397465949,
-   "bars_held": 4,
+   "bars_held": 5,
    "best_price": 382.25,
    "meta": {
     "trade_id": "S20261016-RBLBANK-1",
@@ -21,32 +21,54 @@
     "entry_costs": 11.6088821264,
     "trigger": "dip_reversion",
     "score": 3.467,
-    "last_bar": "2026-10-22 00:00:00",
+    "last_bar": "2026-10-23 00:00:00",
     "order_id": "PAPER-RBLBANK-1"
+   }
+  },
+  {
+   "symbol": "APOLLO",
+   "mode": "swing",
+   "side": "LONG",
+   "qty": 25,
+   "entry_price": 388.9,
+   "initial_stop": 337.5,
+   "stop": 337.5,
+   "entry_time": "2026-10-23 00:00:00",
+   "atr": 17.059882419768734,
+   "bars_held": 1,
+   "best_price": 392.75,
+   "meta": {
+    "trade_id": "S20261023-APOLLO-2",
+    "margin": 9722.5,
+    "entry_costs": 11.533082285,
+    "trigger": "dip_reversion",
+    "score": 2.362,
+    "last_bar": "2026-10-23 00:00:00",
+    "order_id": "PAPER-APOLLO-1"
    }
   }
  ],
  "pending": [
   {
    "spec": {
-    "symbol": "APOLLO",
+    "symbol": "ACMESOLAR",
     "side": "LONG",
-    "qty": 25,
+    "qty": 26,
     "product": "CNC",
-    "ref_price": 388.70001220703125,
-    "stop": 337.5,
-    "signal_time": "2026-10-22 00:00:00",
-    "tag": "nbs1022APOLLO",
+    "ref_price": 371.8500061035156,
+    "stop": 316.25,
+    "signal_time": "2026-10-23 00:00:00",
+    "tag": "nbs1023ACMESOLAR",
     "meta": {
-     "atr": 17.059882419768734,
+     "atr": 18.53170090555747,
      "trigger": "dip_reversion",
-     "score": 2.362,
-     "risk_pct": 0.0258,
+     "score": 2.477,
+     "risk_pct": 0.02961,
      "binding": "target notional"
     }
    },
-   "order_id": "PAPER-APOLLO-1",
-   "placed": "2026-10-22 00:00:00"
+   "order_id": "PAPER-ACMESOLAR-1",
+   "placed": "2026-10-23 00:00:00"
   }
  ],
  "breakers": {
@@ -54,15 +76,15 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-22",
-  "trades_today": 0,
+  "session": "2026-10-23",
+  "trades_today": 1,
   "realised_today": 0.0,
   "peak_equity": 50036.4911178736,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-22",
+ "last_processed": "2026-10-23",
  "traded_today": [],
- "trade_seq": 1,
+ "trade_seq": 2,
  "starved_sessions": 0
 }
