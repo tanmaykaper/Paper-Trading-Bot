@@ -1,7 +1,7 @@
 {
  "mode": "swing",
  "initial_cash": 50000.0,
- "cash": 30467.9580355886,
+ "cash": 31006.535113230904,
  "positions": [
   {
    "symbol": "RBLBANK",
@@ -13,7 +13,7 @@
    "stop": 336.45,
    "entry_time": "2026-10-16 00:00:00",
    "atr": 12.559577397465949,
-   "bars_held": 5,
+   "bars_held": 6,
    "best_price": 382.25,
    "meta": {
     "trade_id": "S20261016-RBLBANK-1",
@@ -21,54 +21,54 @@
     "entry_costs": 11.6088821264,
     "trigger": "dip_reversion",
     "score": 3.467,
-    "last_bar": "2026-10-23 00:00:00",
+    "last_bar": "2026-10-26 00:00:00",
     "order_id": "PAPER-RBLBANK-1"
    }
   },
   {
-   "symbol": "APOLLO",
+   "symbol": "ACMESOLAR",
    "mode": "swing",
    "side": "LONG",
-   "qty": 25,
-   "entry_price": 388.9,
-   "initial_stop": 337.5,
-   "stop": 337.5,
-   "entry_time": "2026-10-23 00:00:00",
-   "atr": 17.059882419768734,
+   "qty": 26,
+   "entry_price": 372.7,
+   "initial_stop": 316.25,
+   "stop": 316.25,
+   "entry_time": "2026-10-26 00:00:00",
+   "atr": 18.53170090555747,
    "bars_held": 1,
-   "best_price": 392.75,
+   "best_price": 384.45001220703125,
    "meta": {
-    "trade_id": "S20261023-APOLLO-2",
-    "margin": 9722.5,
-    "entry_costs": 11.533082285,
+    "trade_id": "S20261026-ACMESOLAR-3",
+    "margin": 9690.199999999999,
+    "entry_costs": 11.494767185199997,
     "trigger": "dip_reversion",
-    "score": 2.362,
-    "last_bar": "2026-10-23 00:00:00",
-    "order_id": "PAPER-APOLLO-1"
+    "score": 2.477,
+    "last_bar": "2026-10-26 00:00:00",
+    "order_id": "PAPER-ACMESOLAR-1"
    }
   }
  ],
  "pending": [
   {
    "spec": {
-    "symbol": "ACMESOLAR",
+    "symbol": "CUB",
     "side": "LONG",
-    "qty": 26,
+    "qty": 48,
     "product": "CNC",
-    "ref_price": 371.8500061035156,
-    "stop": 316.25,
-    "signal_time": "2026-10-23 00:00:00",
-    "tag": "nbs1023ACMESOLAR",
+    "ref_price": 207.97999572753906,
+    "stop": 183.34,
+    "signal_time": "2026-10-26 00:00:00",
+    "tag": "nbs1026CUB",
     "meta": {
-     "atr": 18.53170090555747,
+     "atr": 8.210275917833847,
      "trigger": "dip_reversion",
-     "score": 2.477,
-     "risk_pct": 0.02961,
+     "score": 2.663,
+     "risk_pct": 0.02364,
      "binding": "target notional"
     }
    },
-   "order_id": "PAPER-ACMESOLAR-1",
-   "placed": "2026-10-23 00:00:00"
+   "order_id": "PAPER-CUB-1",
+   "placed": "2026-10-26 00:00:00"
   }
  ],
  "breakers": {
@@ -76,15 +76,15 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-23",
+  "session": "2026-10-26",
   "trades_today": 1,
-  "realised_today": 0.0,
+  "realised_today": 506.2387625425,
   "peak_equity": 50036.4911178736,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-23",
+ "last_processed": "2026-10-26",
  "traded_today": [],
- "trade_seq": 2,
+ "trade_seq": 3,
  "starved_sessions": 0
 }
