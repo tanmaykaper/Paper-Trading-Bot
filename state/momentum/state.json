@@ -23,9 +23,9 @@
     "score": 5.3241,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-CUPID-1",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 320.8500061035156,
-    "anchor_close": 306.45001220703125
+    "anchor_date": "2026-10-26",
+    "anchor_open": 308.0,
+    "anchor_close": 314.04998779296875
    }
   },
   {
@@ -48,9 +48,9 @@
     "score": 4.795,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-STLTECH-2",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 770.0,
-    "anchor_close": 826.6500244140625
+    "anchor_date": "2026-10-26",
+    "anchor_open": 800.0,
+    "anchor_close": 867.5499877929688
    }
   },
   {
@@ -73,9 +73,9 @@
     "score": 3.6712,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-SIGMAADV-3",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 781.2999877929688,
-    "anchor_close": 781.2999877929688
+    "anchor_date": "2026-10-26",
+    "anchor_open": 742.2999877929688,
+    "anchor_close": 820.2999877929688
    }
   },
   {
@@ -98,9 +98,9 @@
     "score": 3.2975,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-BLISSGVS-4",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 645.0999755859375,
-    "anchor_close": 623.3499755859375
+    "anchor_date": "2026-10-26",
+    "anchor_open": 620.0,
+    "anchor_close": 620.0499877929688
    }
   },
   {
@@ -123,9 +123,9 @@
     "score": 2.5397,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-INDSWFTLAB-7",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 345.0,
-    "anchor_close": 327.45001220703125
+    "anchor_date": "2026-10-26",
+    "anchor_open": 320.0,
+    "anchor_close": 337.04998779296875
    }
   },
   {
@@ -148,9 +148,9 @@
     "score": 1.9902,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-HFCL-8",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 240.0,
-    "anchor_close": 240.07000732421875
+    "anchor_date": "2026-10-26",
+    "anchor_open": 234.0,
+    "anchor_close": 244.6300048828125
    }
   },
   {
@@ -173,9 +173,9 @@
     "score": 1.913,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-AEROFLEX-9",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 470.0,
-    "anchor_close": 451.29998779296875
+    "anchor_date": "2026-10-26",
+    "anchor_open": 450.0,
+    "anchor_close": 445.75
    }
   },
   {
@@ -198,9 +198,9 @@
     "score": 1.8978,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-ATHERENERG-10",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 1431.0,
-    "anchor_close": 1380.0
+    "anchor_date": "2026-10-26",
+    "anchor_open": 1365.5999755859375,
+    "anchor_close": 1575.0
    }
   },
   {
@@ -223,9 +223,9 @@
     "score": 2.1416,
     "last_bar": "2026-10-12 00:00:00",
     "order_id": "PAPER-SAKAR-1",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 956.0,
-    "anchor_close": 889.7999877929688
+    "anchor_date": "2026-10-26",
+    "anchor_open": 885.0,
+    "anchor_close": 970.7999877929688
    }
   },
   {
@@ -248,9 +248,9 @@
     "score": 2.0933,
     "last_bar": "2026-10-19 00:00:00",
     "order_id": "PAPER-TBZ-1",
-    "anchor_date": "2026-10-23",
-    "anchor_open": 695.0499877929688,
-    "anchor_close": 679.4000244140625
+    "anchor_date": "2026-10-26",
+    "anchor_open": 645.4500122070312,
+    "anchor_close": 645.4500122070312
    }
   }
  ],
@@ -260,18 +260,18 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-23",
+  "session": "2026-10-26",
   "trades_today": 0,
   "realised_today": 0.0,
   "peak_equity": 51018.01948813152,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-23",
+ "last_processed": "2026-10-26",
  "traded_today": [],
  "trade_seq": 12,
  "low_eligible_runs": 0,
  "last_eligible": 871,
  "starved_rebalances": 0,
- "sessions_since_rebalance": 3
+ "sessions_since_rebalance": 4
 }

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="320" viewBox="0 0 800 320" role="img" aria-labelledby="t" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
-<title id="t">Money in your pocket after charges and tax: ₹1,35,972 on 26 Oct 2026, −9.35% on the ₹1,50,000 put in on 5 Oct 2026.</title>
+<title id="t">Money in your pocket after charges and tax: ₹1,37,279 on 26 Oct 2026, −8.48% on the ₹1,50,000 put in on 5 Oct 2026.</title>
 <line x1="86" x2="104" y1="15" y2="15" stroke="#2a78d6" stroke-width="2" stroke-linecap="round"/>
 <text x="112" y="19" font-size="12" fill="#52514e">In your pocket, after charges and tax</text>
 <line x1="399" x2="417" y1="15" y2="15" stroke="#a8a79f" stroke-width="1" stroke-linecap="round"/>
@@ -21,9 +21,9 @@
 <text x="430.0" y="308" text-anchor="middle" font-size="12" fill="#52514e">15 Oct</text>
 <text x="559.0" y="308" text-anchor="middle" font-size="12" fill="#52514e">21 Oct</text>
 <text x="688.0" y="308" text-anchor="end" font-size="12" fill="#52514e">26 Oct</text>
-<path d="M86.0,282.0 L86.0,105.0 L129.0,101.8 L172.0,97.6 L215.0,103.4 L258.0,169.9 L301.0,162.4 L344.0,171.4 L387.0,176.3 L430.0,187.2 L473.0,188.3 L516.0,198.4 L559.0,233.7 L602.0,247.1 L645.0,279.5 L688.0,270.5 L688.0,282.0 Z" fill="#2a78d6" fill-opacity="0.08"/>
-<polyline points="86.0,105.0 129.0,101.8 172.0,97.6 215.0,103.4 258.0,169.9 301.0,162.4 344.0,171.4 387.0,176.3 430.0,187.2 473.0,188.3 516.0,198.4 559.0,233.7 602.0,247.1 645.0,279.5 688.0,270.5" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="688.0" cy="270.5" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-<text x="700.0" y="264.0" font-size="14" font-weight="600" fill="#0b0b0b">₹1,35,972</text>
-<text x="700.0" y="281.0" font-size="12" fill="#52514e">−9.35%</text>
+<path d="M86.0,282.0 L86.0,105.0 L129.0,101.8 L172.0,97.6 L215.0,103.4 L258.0,169.9 L301.0,162.4 L344.0,171.4 L387.0,176.3 L430.0,187.2 L473.0,188.3 L516.0,198.4 L559.0,233.7 L602.0,247.1 L645.0,279.5 L688.0,255.1 L688.0,282.0 Z" fill="#2a78d6" fill-opacity="0.08"/>
+<polyline points="86.0,105.0 129.0,101.8 172.0,97.6 215.0,103.4 258.0,169.9 301.0,162.4 344.0,171.4 387.0,176.3 430.0,187.2 473.0,188.3 516.0,198.4 559.0,233.7 602.0,247.1 645.0,279.5 688.0,255.1" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="688.0" cy="255.1" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="700.0" y="255.1" font-size="14" font-weight="600" fill="#0b0b0b">₹1,37,279</text>
+<text x="700.0" y="272.1" font-size="12" fill="#52514e">−8.48%</text>
 </svg>
