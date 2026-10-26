@@ -1,0 +1,2 @@
+trade_id,mode,symbol,side,qty,entry_time,entry_price,initial_stop,exit_time,exit_price,exit_reason,bars_held,gross_pnl,costs,net_pnl,net_r,trigger,score
+S20261023-APOLLO-2,swing,APOLLO,LONG,25,2026-10-23 00:00:00,388.9,337.5,2026-10-26 00:00:00,410.65,reversion target: close vs EMA-5,1,543.75,37.51,506.24,0.394,dip_reversion,2.362
