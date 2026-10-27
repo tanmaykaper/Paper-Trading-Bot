@@ -1,26 +1,28 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 46640.079223062305,
+ "cash": 46054.020006442675,
  "positions": [],
  "pending": [],
  "breakers": {
-  "consecutive_losses": 1,
+  "consecutive_losses": 2,
   "cooldown_left": 0,
   "reduced": true,
   "reduced_left": 2,
-  "session": "2026-10-26",
-  "trades_today": 2,
-  "realised_today": -415.52915545180343,
+  "session": "2026-10-27",
+  "trades_today": 4,
+  "realised_today": -586.0592166196378,
   "peak_equity": 51361.848931443434,
   "halted_for_session": true,
   "latched": false
  },
  "last_processed": null,
  "traded_today": [
-  "TRENT",
-  "MARUTI"
+  "BEL",
+  "CANBK",
+  "COFORGE",
+  "SHRIRAMFIN"
  ],
- "trade_seq": 50,
- "session": "2026-10-26"
+ "trade_seq": 54,
+ "session": "2026-10-27"
 }
