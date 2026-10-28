@@ -13,15 +13,15 @@
    "stop": 183.34,
    "entry_time": "2026-10-27 00:00:00",
    "atr": 8.210275917833847,
-   "bars_held": 1,
-   "best_price": 218.42999267578125,
+   "bars_held": 2,
+   "best_price": 233.6999969482422,
    "meta": {
     "trade_id": "S20261027-CUB-4",
     "margin": 9988.32,
     "entry_costs": 11.84840488032,
     "trigger": "dip_reversion",
     "score": 2.663,
-    "last_bar": "2026-10-27 00:00:00",
+    "last_bar": "2026-10-28 00:00:00",
     "order_id": "PAPER-CUB-1"
    }
   }
@@ -32,14 +32,14 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-27",
-  "trades_today": 1,
-  "realised_today": 316.9287161430018,
-  "peak_equity": 51052.758839430186,
+  "session": "2026-10-28",
+  "trades_today": 0,
+  "realised_today": 0.0,
+  "peak_equity": 51142.999073805186,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-27",
+ "last_processed": "2026-10-28",
  "traded_today": [],
  "trade_seq": 4,
  "starved_sessions": 0
