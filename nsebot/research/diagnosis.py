@@ -27,7 +27,11 @@ pre-registered forward test.
   4 VARIANTS      each candidate book at all 5 rebalance phases on Nifty's
                   calendar (the live engine's): CAGR on the untouched
                   2018-23 window, the full span and the recent window, worst
-                  drawdown, Sharpe, costs.
+                  drawdown, Sharpe, costs, and how many phases beat B4's.
+                  The no-jump filter (V4) is also run at 10% and 20%.
+  5 OWNING B4     its round trips (hit rate, payoff, how much the best tenth
+                  carries), and how often a stretch as long as the live one
+                  went as badly.
 """
 
 import argparse
@@ -241,6 +245,31 @@ def variants(P, liquid, s):
     ]
 
 
+def jump_sensitivity(liquid, s):
+    """V4 at neighbouring thresholds: an effect that exists only at 15% is noise."""
+    mom, mx = s['12-1 momentum (B4)'], -s['−largest daily gain, 63 sessions']
+    with np.errstate(invalid='ignore'):
+        return [(f'V4 at {j:.0%}', mom, liquid, mx < j, 10, 5) for j in (0.10, 0.20)]
+
+
+def round_trips(P, held):
+    """Completed trades from a rotate() holdings log: bought at the open of
+    the first session held, sold at the open after the last."""
+    o = P.a['open']
+    T = held.shape[0]
+    rows = []
+    for j in np.flatnonzero((held > 0).any(axis=0)):
+        h = held[:, j] > 0
+        starts = np.flatnonzero(h & ~np.r_[False, h[:-1]])
+        ends = np.flatnonzero(h & ~np.r_[h[1:], False])
+        for a, b in zip(starts, ends):
+            if b + 1 < T and np.isfinite(o[a, j]) and np.isfinite(o[b + 1, j]):
+                gross = o[b + 1, j] / o[a, j] - 1
+                cost = DEFAULT_CHARGES.cnc(5_000.0, 5_000.0 * (1 + gross)) / 5_000.0
+                rows.append((P.dates[a], P.symbols[j], gross - cost, b + 1 - a))
+    return pd.DataFrame(rows, columns=['entry', 'symbol', 'net', 'sessions'])
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Predictive power
 # ═════════════════════════════════════════════════════════════════════════════
@@ -430,17 +459,21 @@ def run(out_dir, fetch=None, get_list=None, get_series=None, state_dir=os.path.j
     md += ['## 1. The live window', '']
     eq, positions, trades = live_ledger(state_dir)
     t0 = int(np.searchsorted(P.dates, LIVE_START))
+    live = {}                                       # live window returns, for section 5
     if t0 < len(P.dates) and P.dates[t0] == LIVE_START and t0 + 1 < len(P.dates):
         md += [f'From the {LIVE_START.date()} close (the sleeve\'s first decision) to {last.date()}:', '',
                '| | return |', '|---|---|']
         if eq is not None and len(eq):
             e = eq.set_index(pd.to_datetime(eq['session']))['equity'].astype(float)
-            md.append(f'| Momentum sleeve, as booked | {_p(e.iloc[-1] / e.iloc[0] - 1)} |')
+            live['as booked'] = e.iloc[-1] / e.iloc[0] - 1
+            live['sessions'] = len(e) - 1
+            md.append(f'| Momentum sleeve, as booked | {_p(live["as booked"])} |')
             hits = live_ca(P, events, positions, trades)
             if hits:
                 booked = sum(h[3] for h in hits)
+                live['value kept'] = (e.iloc[-1] + booked) / e.iloc[0] - 1
                 md.append(f'| Momentum sleeve, value kept across corporate-action gaps (est.) | '
-                          f'{_p((e.iloc[-1] + booked) / e.iloc[0] - 1)} |')
+                          f'{_p(live["value kept"])} |')
         for sym, label in BENCHMARKS.items():
             d = bench.get(sym)
             if d is not None and len(d):
@@ -547,11 +580,16 @@ def run(out_dir, fetch=None, get_list=None, get_series=None, state_dir=os.path.j
            f'Untouched = Jul 2018 – Jul 2023; full = Jul 2018 – {last.date()}; recent = '
            f'{RECENT_START.date()} – {last.date()}. Costs are Zerodha CNC charges per year as a share of '
            f'average equity; short-term capital-gains tax is not modelled and hits a faster rotation harder.', '',
-           '| design | CAGR untouched | CAGR full | CAGR recent | worst max DD | Sharpe (full) | costs/yr |',
-           '|---|---|---|---|---|---|---|']
-    csv_rows = []
-    for name, sc, elig, bf, n, every in variants(Q, liquid, s_adj):
+           'Phases beating B4 = how many of the 5 runs beat B4\'s run at the same phase (untouched / full / '
+           'recent).', '',
+           '| design | CAGR untouched | CAGR full | CAGR recent | worst max DD | Sharpe (full) | costs/yr | '
+           'phases beating B4 |',
+           '|---|---|---|---|---|---|---|---|']
+    csv_rows, base, b4_curves = [], None, None
+    for name, sc, elig, bf, n, every in variants(Q, liquid, s_adj) + jump_sensitivity(liquid, s_adj):
         runs = phase_curves(Q, sc, elig, buy_filter=bf, n=n, every=every)
+        if b4_curves is None:
+            b4_curves = [e for e, _ in runs]
         stats = []
         for k, (e, costs) in enumerate(runs):
             a, b, r = curve(e, WIN_START, WIN_END), curve(e, WIN_START, last), curve(e, RECENT_START, last)
@@ -564,16 +602,50 @@ def run(out_dir, fetch=None, get_list=None, get_series=None, state_dir=os.path.j
                              'cagr_full': stats[-1][1], 'cagr_recent': stats[-1][2], 'maxdd': stats[-1][3],
                              'sharpe': stats[-1][4], 'costs_per_year': stats[-1][5]})
         cols = [np.array([x[i] if x[i] is not None else np.nan for x in stats], dtype=float) for i in range(6)]
+        if base is None:
+            base = cols
+        beats = '/'.join(str(int(np.sum(cols[i] > base[i]))) for i in range(3)) if cols is not base else '—'
 
         def mm(v):
             v = v[np.isfinite(v)]
             return f'{_p(np.median(v))} [{_p(v.min())} – {_p(v.max())}]' if len(v) else '—'
         md.append(f'| {name} | {mm(cols[0])} | {mm(cols[1])} | {mm(cols[2])} | '
-                  f'{_p(np.nanmin(cols[3]), False)} | {np.nanmedian(cols[4]):.2f} | {_p(np.nanmedian(cols[5]), False, 2)} |')
+                  f'{_p(np.nanmin(cols[3]), False)} | {np.nanmedian(cols[4]):.2f} | '
+                  f'{_p(np.nanmedian(cols[5]), False, 2)} | {beats} |')
     pd.DataFrame(csv_rows).to_csv(os.path.join(out_dir, 'diagnosis_variants.csv'), index=False)
-    md += ['', '_Nine designs on one history: the best of them is flattered by selection. A design that beats '
+    md += ['', '_Eleven designs on one history: the best of them is flattered by selection. A design that beats '
                'B4 at every phase, in both windows, with a shallower drawdown is a candidate for a pre-registered '
                'forward test — nothing more._', '']
+
+    # ── 5 what owning B4 is like ─────────────────────────────────────────────
+    _, _, held_adj = rotate(Q, s_adj['12-1 momentum (B4)'], liquid, buy_ok=q_ok, sell_ok=q_sell, log=True)
+    rt = round_trips(Q, held_adj)
+    rt = rt[rt['entry'] >= WIN_START]
+    md += ['## 5. What owning B4 is like', '']
+    if len(rt):
+        wins, losses = rt['net'][rt['net'] > 0], rt['net'][rt['net'] <= 0]
+        best = rt['net'].sort_values(ascending=False)
+        k = max(len(rt) // 10, 1)
+        md += [f'**{len(rt)} round trips since Jul 2018** (phase 0, after CNC costs): '
+               f'{len(wins) / len(rt):.0%} made money; average winner {_p(wins.mean())}, average loser '
+               f'{_p(losses.mean())} (payoff {wins.mean() / abs(losses.mean()):.2f}); median holding '
+               f'{int(rt["sessions"].median())} sessions. The best 10% of trades sum to {_p(best.iloc[:k].sum(), nd=0)} '
+               f'of equal-weight return; all the others together, {_p(best.iloc[k:].sum(), nd=0)}.', '']
+    win = int(live.get('sessions') or 17)
+    pooled = pd.concat([(e.shift(-win) / e - 1)[e.index >= WIN_START].dropna() for e in b4_curves])
+    yearly = pd.concat([(e.shift(-252) / e - 1)[e.index >= WIN_START].dropna() for e in b4_curves])
+    dd = pd.concat([(e / e.cummax() - 1)[e.index >= WIN_START] for e in b4_curves])
+    md += [f'**Every {win}-session stretch since Jul 2018, all 5 phases** ({len(pooled):,} windows): '
+           f'5th percentile {_p(pooled.quantile(0.05))}, 10th {_p(pooled.quantile(0.10))}, median '
+           f'{_p(pooled.median())}, 90th {_p(pooled.quantile(0.90))}.', '']
+    for label in ('value kept', 'as booked'):
+        if label in live:
+            md.append(f'- The live sleeve {label} ({_p(live[label])}) or worse: '
+                      f'{(pooled <= live[label]).mean():.0%} of stretches.')
+    md += [f'- Any 252-session window losing money: {(yearly < 0).mean():.0%}; losing 20%+: '
+           f'{(yearly < -0.2).mean():.0%}.',
+           f'- Sessions spent 20%+ below the previous peak: {(dd <= -0.2).mean():.0%}; 30%+: '
+           f'{(dd <= -0.3).mean():.0%}.', '']
     return _write(out_dir, md)
 
 

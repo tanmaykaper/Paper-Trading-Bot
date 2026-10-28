@@ -136,8 +136,20 @@ def test_run_end_to_end_on_fake_sources(tmp_path):
     report = diagnosis.run(str(out), fetch=fetch, get_list=lambda: (syms, 'fake list'),
                            get_series=lambda: {'S002': 'BE'}, state_dir=str(state))
     for heading in ('## 1. The live window', '## 2. Corporate actions', '## 3. Which score predicts',
-                    '## 4. Candidate books'):
+                    '## 4. Candidate books', '## 5. What owning B4 is like'):
         assert heading in report
     assert '| S001 |' in report and 'value kept across corporate-action gaps' in report
-    assert '| B4 deployed: 12-1, top 10, every 5 sessions |' in report
+    assert '| B4 deployed: 12-1, top 10, every 5 sessions |' in report and '| V4 at 20% |' in report
+    assert 'round trips since Jul 2018' in report and 'The live sleeve as booked (-10.0%)' in report
     assert (out / 'DIAGNOSIS.md').exists() and (out / 'diagnosis_variants.csv').exists()
+
+
+def test_round_trips_read_entries_and_exits_off_the_holdings_log():
+    P = Panel(_world(n=3, T=80))
+    held = np.zeros((80, 3), dtype=np.int32)
+    held[5:10, 0] = 7                                      # bought at the open of 5, sold at the open of 10
+    held[70:, 1] = 3                                       # still open at the end: not a round trip
+    rt = diagnosis.round_trips(P, held)
+    assert len(rt) == 1 and rt['symbol'].iloc[0] == P.symbols[0] and rt['sessions'].iloc[0] == 5
+    o = P.a['open'][:, 0]
+    assert rt['net'].iloc[0] < o[10] / o[5] - 1 < rt['net'].iloc[0] + 0.007       # gross less CNC costs (~0.5% on ₹5k)
