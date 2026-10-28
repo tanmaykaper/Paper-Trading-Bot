@@ -308,6 +308,30 @@ Findings:
 4. **This is a noise measurement, not a choice.** No phase is "picked": the live book gets whatever phase its start date gives it. The honest expectation is the spread, not any single run.
 5. **Caveats from rounds 6–7 still apply:** stocks delisted before today are missing, tax is not modelled, and dividends are not credited in the paper ledger.
 
+## Round 9: diagnosis of the first live weeks (run 40735738159)
+
+Post-hoc and exploratory (`nsebot/research/diagnosis.py`), written after the live book fell 6.97% in its first 16 sessions. The full write-up, with live-trade forensics and the ranked fixes, is in [`docs/DIAGNOSIS.md`](DIAGNOSIS.md).
+
+1. **The live momentum loss is mostly accounting plus the market.**
+   - BHAGYANGR's demerger into Tieramet (record date 8 Oct 2026) was booked as an 89% loss.
+   - With its value kept across the gap, the sleeve made −4.6% from 5 to 28 Oct, against −5.1% for an equal-weight hold of the 971 eligible stocks.
+   - 19% of B4's 16-session stretches since 2018 were as bad or worse.
+2. **Corporate-action gaps are rising, but haven't touched the research.**
+   - Sessions that open and close 30%+ under the previous close: 44 since 2017, 16 of them in 2025 alone.
+   - B4's backtest held none, and adjusting for them moves its CAGR by under 2 points.
+3. **Raw 12-1 is the best of the scores tested on NSE data.**
+   - Forward one-month excess return rises with 12-1: +1.35% a month for names up 200%+.
+   - Its top 10 beat the eligible average by 1.9% a month on the untouched window.
+   - Every alternative tested picks a worse 10 from B4's own top 30: volatility-adjusted, NSE-style composite, frog-in-the-pan smoothness, 52-week high, low volatility and low max-gain.
+4. **One variant is worth a forward test: no buys within 63 sessions of a 15%+ single-day gain (V4).**
+   - It beat B4 at 4/5/5 of the rebalance timings (untouched / full / recent), with a −50.4% worst drawdown against −53.6%.
+   - It still helps at a 10% threshold and fades at 20%.
+   - Its gain is concentrated in 2023–26, and it was the best of 11 designs tried, so it goes to a pre-registered shadow test, not deployment.
+5. **B4's profile, as a holder lives it.**
+   - 53% of round trips win; payoff 2.6; the best tenth of trades carry all the profit.
+   - Half of all sessions are spent 20%+ below the previous peak.
+   - 28% of 252-session windows lose money.
+
 ## What the evidence supports
 
 1. **Swing: S4b dip reversion is not proven, and round 5 points negative.**
