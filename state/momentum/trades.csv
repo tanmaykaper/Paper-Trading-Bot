@@ -1,3 +1,4 @@
 trade_id,mode,symbol,side,qty,entry_time,entry_price,initial_stop,exit_time,exit_price,exit_reason,bars_held,gross_pnl,costs,net_pnl,net_r,trigger,score
 M20261006-BHAGYANGR-5,momentum,BHAGYANGR,LONG,12,2026-10-06 00:00:00,418.15,0.0,2026-10-13 00:00:00,47.82,rebalance: no longer eligible,0,-4443.96,21.89,-4465.85,-0.89,momentum_12_1,3.1775
 M20261006-VENUSREM-6,momentum,VENUSREM,LONG,2,2026-10-06 00:00:00,1808.9,0.0,2026-10-21 00:00:00,1592.4,rebalance: no longer eligible,0,-433.0,22.93,-455.93,-0.126,momentum_12_1,2.6264
+M20261006-ATHERENERG-10,momentum,ATHERENERG,LONG,3,2026-10-06 00:00:00,1409.5,0.0,2026-10-28 00:00:00,1679.0,rebalance: fell out of the top 30 (rank 47),0,808.5,25.58,782.92,0.1852,momentum_12_1,1.8978
