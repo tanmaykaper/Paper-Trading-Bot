@@ -1,25 +1,29 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 45902.514792527785,
+ "cash": 45780.83591343574,
  "positions": [],
  "pending": [],
  "breakers": {
   "consecutive_losses": 0,
   "cooldown_left": 0,
-  "reduced": true,
-  "reduced_left": 2,
-  "session": "2026-10-28",
-  "trades_today": 1,
-  "realised_today": -151.5052139149012,
+  "reduced": false,
+  "reduced_left": 1,
+  "session": "2026-10-29",
+  "trades_today": 5,
+  "realised_today": -121.67887909203978,
   "peak_equity": 51361.848931443434,
-  "halted_for_session": true,
+  "halted_for_session": false,
   "latched": false
  },
  "last_processed": null,
  "traded_today": [
-  "POWERGRID"
+  "VEDL",
+  "TITAN",
+  "COALINDIA",
+  "NTPC",
+  "TATAPOWER"
  ],
- "trade_seq": 55,
- "session": "2026-10-28"
+ "trade_seq": 60,
+ "session": "2026-10-29"
 }
