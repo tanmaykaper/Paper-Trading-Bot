@@ -1,45 +1,22 @@
 {
  "mode": "swing",
  "initial_cash": 50000.0,
- "cash": 40822.999073805186,
- "positions": [
-  {
-   "symbol": "CUB",
-   "mode": "swing",
-   "side": "LONG",
-   "qty": 48,
-   "entry_price": 208.09,
-   "initial_stop": 183.34,
-   "stop": 183.34,
-   "entry_time": "2026-10-27 00:00:00",
-   "atr": 8.210275917833847,
-   "bars_held": 2,
-   "best_price": 233.6999969482422,
-   "meta": {
-    "trade_id": "S20261027-CUB-4",
-    "margin": 9988.32,
-    "entry_costs": 11.84840488032,
-    "trigger": "dip_reversion",
-    "score": 2.663,
-    "last_bar": "2026-10-28 00:00:00",
-    "order_id": "PAPER-CUB-1"
-   }
-  }
- ],
+ "cash": 51681.81929785575,
+ "positions": [],
  "pending": [],
  "breakers": {
   "consecutive_losses": 0,
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-28",
+  "session": "2026-10-29",
   "trades_today": 0,
-  "realised_today": 0.0,
-  "peak_equity": 51142.999073805186,
+  "realised_today": 858.6518191702398,
+  "peak_equity": 51681.81929785575,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-28",
+ "last_processed": "2026-10-29",
  "traded_today": [],
  "trade_seq": 4,
  "starved_sessions": 0
