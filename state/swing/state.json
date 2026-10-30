@@ -9,14 +9,14 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-29",
+  "session": "2026-10-30",
   "trades_today": 0,
-  "realised_today": 858.6518191702398,
+  "realised_today": 0.0,
   "peak_equity": 51681.81929785575,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-29",
+ "last_processed": "2026-10-30",
  "traded_today": [],
  "trade_seq": 4,
  "starved_sessions": 0
