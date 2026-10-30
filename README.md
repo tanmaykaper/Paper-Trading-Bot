@@ -3,24 +3,24 @@
 <!-- progress:start — drawn by scripts/progress.py after every bot run; edits here are overwritten -->
 ## How the money is doing
 
-**₹1,40,218 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−6.52%), at the close on 30 Oct 2026.
+**₹1,38,847 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−7.44%), at the close on 30 Oct 2026.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/progress/chart-dark.svg">
-  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,40,218 on 30 Oct 2026." src="docs/progress/chart-light.svg">
+  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,38,847 on 30 Oct 2026." src="docs/progress/chart-light.svg">
 </picture>
 
 That is what the three bots' paper trades would have left you with as real trades, had you sold everything at that close: after Zerodha's charges and slippage on every trade, the cost of selling the open positions, and income tax on the profit.
 
 | Bot | Since | Value | Return | Change on 30 Oct | Closed trades | Open now |
 |---|---|---|---|---|---|---|
-| Momentum | 5 Oct 2026 | ₹43,689 | −12.62% | ₹0 | 3 | 9 |
+| Momentum | 5 Oct 2026 | ₹42,316 | −15.37% | −₹1,373 | 3 | 9 |
 | Swing | 5 Oct 2026 | ₹51,682 | +3.36% | ₹0 | 4 | 0 |
 | Intraday | 9 Oct 2026 | ₹45,044 | −9.91% | −₹737 | 65 | 0 |
-| **All three** | | **₹1,40,415** | **−6.39%** | −₹737 | 72 | 9 |
-| Selling the open positions | | −₹197 | | | | |
+| **All three** | | **₹1,39,042** | **−7.31%** | −₹2,110 | 72 | 9 |
+| Selling the open positions | | −₹195 | | | | |
 | Tax on the profit | | ₹0 | | | | |
-| **In your pocket** | | **₹1,40,218** | **−6.52%** | | | |
+| **In your pocket** | | **₹1,38,847** | **−7.44%** | | | |
 
 <sub>Value is cash plus open positions at the close, after the charges already paid. Tax is 20.8% on delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>
 <!-- progress:end -->
