@@ -3,24 +3,24 @@
 <!-- progress:start — drawn by scripts/progress.py after every bot run; edits here are overwritten -->
 ## How the money is doing
 
-**₹1,38,194 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−7.87%), at the close on 2 Nov 2026.
+**₹1,37,417 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−8.39%), at the close on 2 Nov 2026.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/progress/chart-dark.svg">
-  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,38,194 on 2 Nov 2026." src="docs/progress/chart-light.svg">
+  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,37,417 on 2 Nov 2026." src="docs/progress/chart-light.svg">
 </picture>
 
 That is what the three bots' paper trades would have left you with as real trades, had you sold everything at that close: after Zerodha's charges and slippage on every trade, the cost of selling the open positions, and income tax on the profit.
 
 | Bot | Since | Value | Return | Change on 2 Nov | Closed trades | Open now |
 |---|---|---|---|---|---|---|
-| Momentum | 5 Oct 2026 | ₹42,316 | −15.37% | ₹0 | 3 | 9 |
+| Momentum | 5 Oct 2026 | ₹41,537 | −16.93% | −₹779 | 3 | 9 |
 | Swing | 5 Oct 2026 | ₹51,682 | +3.36% | ₹0 | 4 | 0 |
 | Intraday | 9 Oct 2026 | ₹44,391 | −11.22% | −₹653 | 70 | 0 |
-| **All three** | | **₹1,38,389** | **−7.74%** | −₹653 | 77 | 9 |
-| Selling the open positions | | −₹195 | | | | |
+| **All three** | | **₹1,37,610** | **−8.26%** | −₹1,432 | 77 | 9 |
+| Selling the open positions | | −₹194 | | | | |
 | Tax on the profit | | ₹0 | | | | |
-| **In your pocket** | | **₹1,38,194** | **−7.87%** | | | |
+| **In your pocket** | | **₹1,37,417** | **−8.39%** | | | |
 
 <sub>Value is cash plus open positions at the close, after the charges already paid. Tax is 20.8% on delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>
 <!-- progress:end -->
