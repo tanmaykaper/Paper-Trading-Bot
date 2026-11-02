@@ -3,20 +3,42 @@
  "initial_cash": 50000.0,
  "cash": 51681.81929785575,
  "positions": [],
- "pending": [],
+ "pending": [
+  {
+   "spec": {
+    "symbol": "HFCL",
+    "side": "LONG",
+    "qty": 38,
+    "product": "CNC",
+    "ref_price": 219.72999572753906,
+    "stop": 179.67,
+    "signal_time": "2026-11-02 00:00:00",
+    "tag": "nbs1102HFCL",
+    "meta": {
+     "atr": 13.353210466374454,
+     "trigger": "dip_reversion",
+     "score": 1.728,
+     "risk_pct": 0.02945,
+     "binding": "risk cap"
+    }
+   },
+   "order_id": "PAPER-HFCL-1",
+   "placed": "2026-11-02 00:00:00"
+  }
+ ],
  "breakers": {
   "consecutive_losses": 0,
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-10-30",
+  "session": "2026-11-02",
   "trades_today": 0,
   "realised_today": 0.0,
   "peak_equity": 51681.81929785575,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-10-30",
+ "last_processed": "2026-11-02",
  "traded_today": [],
  "trade_seq": 4,
  "starved_sessions": 0
