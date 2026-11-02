@@ -1,29 +1,29 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 45044.015087175234,
+ "cash": 44391.46150487814,
  "positions": [],
  "pending": [],
  "breakers": {
-  "consecutive_losses": 0,
+  "consecutive_losses": 1,
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 2,
-  "session": "2026-10-30",
+  "session": "2026-11-02",
   "trades_today": 5,
-  "realised_today": -736.8208262604985,
+  "realised_today": -652.553582297101,
   "peak_equity": 51361.848931443434,
   "halted_for_session": true,
   "latched": false
  },
  "last_processed": null,
  "traded_today": [
-  "COFORGE",
-  "PNB",
-  "GAIL",
-  "ETERNAL",
-  "BHARTIARTL"
+  "RELIANCE",
+  "DLF",
+  "BEL",
+  "TMPV",
+  "SUNPHARMA"
  ],
- "trade_seq": 65,
- "session": "2026-10-30"
+ "trade_seq": 70,
+ "session": "2026-11-02"
 }
