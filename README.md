@@ -15,14 +15,14 @@ That is what the three bots' paper trades would have left you with as real trade
 | Bot | Since | Value | Return | Change on 3 Nov | Closed trades | Open now |
 |---|---|---|---|---|---|---|
 | Momentum | 5 Oct 2026 | ₹41,537 | −16.93% | ₹0 | 3 | 9 |
-| Swing | 5 Oct 2026 | ₹51,682 | +3.36% | ₹0 | 4 | 0 |
-| Intraday | 9 Oct 2026 | ₹44,079 | −11.84% | −₹313 | 75 | 0 |
+| Swing (retired) | 5 Oct 2026 | ₹51,682 | +3.36% | ₹0 | 4 | 0 |
+| Intraday (retired) | 9 Oct 2026 | ₹44,079 | −11.84% | −₹313 | 75 | 0 |
 | **All three** | | **₹1,37,298** | **−8.47%** | −₹313 | 82 | 9 |
 | Selling the open positions | | −₹194 | | | | |
 | Tax on the profit | | ₹0 | | | | |
 | **In your pocket** | | **₹1,37,104** | **−8.60%** | | | |
 
-<sub>Value is cash plus open positions at the close, after the charges already paid. Tax is 20.8% on delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>
+<sub>Value is cash plus open positions at the close, after the charges already paid. A bot's return is time-weighted, so money moved between bots counts as neither profit nor loss; a retired bot's cash moves to momentum once it is flat (state/sleeves.json). Tax is 20.8% on delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>
 <!-- progress:end -->
 
 A lean NSE trading engine with three modes that share one risk core. **Since 3 Nov 2026 the whole book runs one of them, momentum**; the other two are retired ([`state/sleeves.json`](state/sleeves.json)) and hand their cash to it once flat.
