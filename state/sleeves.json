@@ -1,0 +1,8 @@
+{
+ "_about": "Which sleeves trade. active: trades as designed. retired: no new entries, open positions run to their exits, and once flat its cash moves to the sleeve in sweep_to on that sleeve's next run. See nsebot/sleeves.py and docs/DIAGNOSIS.md.",
+ "momentum": {"status": "active"},
+ "swing": {"status": "retired", "since": "2026-11-03", "sweep_to": "momentum",
+           "why": "S4b dip reversion failed on untouched 2018-20 data and its full-engine backtest makes +2.9% a year, less than its idle cash would earn; the owner chose growth (docs/DIAGNOSIS.md)"},
+ "intraday": {"status": "retired", "since": "2026-11-03", "sweep_to": "momentum",
+              "why": "no edge: 55 live trades net -0.30R each after costs, and no research variant was ever net-positive (docs/DIAGNOSIS.md section 2.2)"}
+}

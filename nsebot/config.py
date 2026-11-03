@@ -63,8 +63,10 @@ class MomentumConfig:
     The only design to pass the pre-registered test on a symbol list without
     hindsight (docs/RESEARCH.md, round 6): untouched Jul 2018 – Jul 2023
     +22.6% CAGR against +21.7% for the median smallcap fund; Jul 2018 – Oct
-    2026 +30.2% against +24.5% for the best; worst drawdown 52.8%. Every
-    number below is the value tested; changing one invalidates that evidence.
+    2026 +30.2% against +24.5% for the best; worst drawdown 52.8%. Round 10
+    re-tested its size (top 5/7/10/15) and the V4 buy filter for the owner's
+    3-5 year horizon and kept B4 top 10. Every number below is the value
+    tested; changing one invalidates that evidence.
     """
     top_n: int = 10                          # equal-weight slots
     band_mult: int = 3                       # keep a holding until it leaves the top band_mult x top_n
@@ -78,6 +80,14 @@ class MomentumConfig:
     series: tuple = ('EQ', 'BE', 'BZ')       # NSE main board; SME platforms (SM, ST) excluded
     min_resolved: float = 0.70               # share of listed symbols that must return data to rebalance
     list_max_age_days: int = 30              # use the cached NSE list for at most this long
+    # V4 buy filter (docs/DIAGNOSIS.md §2.4): no new buy of a stock that gained
+    # `max_jump` or more in one session within the last `jump_window` sessions;
+    # holdings are never sold for it. OFF: the pre-registered growth study
+    # (docs/RESEARCH.md, round 10) kept B4 because V4 beat it at only 2 of 5
+    # rebalance phases on the untouched window, though it led over 2018-26.
+    # Set 0.15 to turn it on; re-run study=growth first.
+    max_jump: float = 0.0
+    jump_window: int = 63
 
 
 @dataclass
