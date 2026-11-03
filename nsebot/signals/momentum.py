@@ -7,6 +7,9 @@ skipping the last month, and own the top of the list.
             (the latest month is skipped: very recent winners tend to give
             some back)
   RANK      eligible names with a score, best first
+  BUYABLE   valid, and no single-session gain of `max_jump` or more in the
+            last `jump_window` bars (the V4 buy filter; holdings are never
+            sold for it)
 
 Sessions are counted on the market calendar, the union of every symbol's
 trading days, so a suspended stock's missing days leave its score undefined
@@ -21,7 +24,7 @@ import pandas as pd
 from ..config import MomentumConfig
 from ..indicators import median_turnover
 
-COLUMNS = ['close', 'turnover', 'score', 'eligible', 'valid', 'rank']
+COLUMNS = ['close', 'turnover', 'score', 'eligible', 'valid', 'max_jump', 'buyable', 'rank']
 
 
 class MomentumRanker:
@@ -36,7 +39,9 @@ class MomentumRanker:
 
     def rank(self, universe, asof, frames=None):
         """One row per symbol (alphabetical): close, turnover, score, eligible,
-        valid (eligible and scored) and rank (0 = best; unscored names last)."""
+        valid (eligible and scored), max_jump (largest one-bar gain over the
+        last jump_window bars), buyable and rank (0 = best; unscored names
+        last)."""
         c = self.cfg
         asof = pd.Timestamp(asof)
         frames = frames if frames is not None else self.frames(universe)
@@ -66,7 +71,10 @@ class MomentumRanker:
             c_look = float(f['close'].get(d_look, np.nan)) if d_look is not None else np.nan
             score = c_skip / c_look - 1.0 if np.isfinite(c_skip) and np.isfinite(c_look) and c_look else np.nan
             eligible = bool(turnover >= c.min_turnover_inr and close >= c.min_price)   # NaN -> False
-            rows.append((close, turnover, score, eligible, eligible and bool(np.isfinite(score))))
+            valid = eligible and bool(np.isfinite(score))
+            jump = self._max_jump(f) if today else np.nan
+            buyable = valid and (not c.max_jump or bool(jump < c.max_jump))          # NaN -> not buyable
+            rows.append((close, turnover, score, eligible, valid, jump, buyable))
         out = pd.DataFrame(rows, index=syms, columns=COLUMNS[:-1])
         sc = np.where(out['valid'].to_numpy(), out['score'].to_numpy(dtype=float), -np.inf)
         order = np.argsort(-sc)                      # the research tie-break, exactly
@@ -74,3 +82,11 @@ class MomentumRanker:
         rank[order] = np.arange(len(syms))
         out['rank'] = rank
         return out
+
+    def _max_jump(self, f):
+        """Largest one-bar gain over the last jump_window bars, as research.diagnosis
+        measures it (at least 40 of them, else NaN)."""
+        closes = f['close'].iloc[-(self.cfg.jump_window + 1):].to_numpy(dtype=float)
+        r = closes[1:] / closes[:-1] - 1.0
+        r = r[np.isfinite(r)]
+        return float(r.max()) if len(r) >= 40 else np.nan

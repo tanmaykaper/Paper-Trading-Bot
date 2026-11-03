@@ -1,11 +1,12 @@
-"""Durable state for one trading sleeve (swing or intraday).
+"""Durable state for one trading sleeve (swing, intraday or momentum).
 
 Everything the next run needs lives under state/<mode>/ and is committed by
 the workflow — the persistence step V2 skipped for its own pending book,
 which is why every plan it ever placed vanished overnight (AUTOPSY §2):
 
   state.json   cash, open positions, pending entries, breaker state,
-               last processed session — the whole state machine
+               last processed session, money moved in or out — the whole
+               state machine
   trades.csv   every closed trade, append-only, with net P&L and net R
   equity.csv   one mark-to-market row per processed session
 
@@ -88,6 +89,19 @@ class Ledger:
     @property
     def cash(self):
         return float(self.state['cash'])
+
+    @property
+    def contributed(self):
+        """The money this sleeve started with plus what moved in, minus what moved out."""
+        return float(self.state['initial_cash']) + sum(float(f['amount']) for f in self.state.get('flows', []))
+
+    def move_cash(self, amount, session, counterparty):
+        """Money moving into (+) or out of (−) this sleeve from another one.
+        Recorded as a flow, so returns stay time-weighted (scripts/progress.py)
+        and a transfer is never mistaken for profit or loss."""
+        self.state['cash'] = round(self.cash + float(amount), 2) + 0.0          # + 0.0: never -0.0
+        self.state.setdefault('flows', []).append({'session': str(session), 'amount': round(float(amount), 2),
+                                                   'with': counterparty})
 
     def next_trade_id(self, symbol, when):
         self.state['trade_seq'] = int(self.state.get('trade_seq', 0)) + 1
