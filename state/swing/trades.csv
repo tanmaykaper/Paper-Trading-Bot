@@ -2,3 +2,4 @@ trade_id,mode,symbol,side,qty,entry_time,entry_price,initial_stop,exit_time,exit
 S20261023-APOLLO-2,swing,APOLLO,LONG,25,2026-10-23 00:00:00,388.9,337.5,2026-10-26 00:00:00,410.65,reversion target: close vs EMA-5,1,543.75,37.51,506.24,0.394,dip_reversion,2.362
 S20261016-RBLBANK-1,swing,RBLBANK,LONG,26,2026-10-16 00:00:00,376.4,336.45,2026-10-27 00:00:00,348.35,max hold 7 bars,6,-729.3,36.33,-765.63,-0.7371,dip_reversion,3.467
 S20261026-ACMESOLAR-3,swing,ACMESOLAR,LONG,26,2026-10-26 00:00:00,372.7,316.25,2026-10-27 00:00:00,415.8,reversion target: close vs EMA-5,1,1120.6,38.04,1082.56,0.7376,dip_reversion,2.477
+S20261027-CUB-4,swing,CUB,LONG,48,2026-10-27 00:00:00,208.09,183.34,2026-10-29 00:00:00,226.78,reversion target: close vs EMA-5,2,897.12,38.47,858.65,0.7228,dip_reversion,2.663
