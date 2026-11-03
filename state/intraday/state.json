@@ -1,29 +1,29 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 44391.46150487814,
+ "cash": 44078.752530173835,
  "positions": [],
  "pending": [],
  "breakers": {
-  "consecutive_losses": 1,
+  "consecutive_losses": 0,
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 2,
-  "session": "2026-11-02",
+  "session": "2026-11-03",
   "trades_today": 5,
-  "realised_today": -652.553582297101,
+  "realised_today": -312.7089747043087,
   "peak_equity": 51361.848931443434,
-  "halted_for_session": true,
+  "halted_for_session": false,
   "latched": false
  },
  "last_processed": null,
  "traded_today": [
-  "RELIANCE",
-  "DLF",
-  "BEL",
-  "TMPV",
-  "SUNPHARMA"
+  "GAIL",
+  "BAJAJFINSV",
+  "HDFCBANK",
+  "TITAN",
+  "JSWSTEEL"
  ],
- "trade_seq": 70,
- "session": "2026-11-02"
+ "trade_seq": 75,
+ "session": "2026-11-03"
 }
