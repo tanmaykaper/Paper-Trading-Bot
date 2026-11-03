@@ -234,7 +234,27 @@ The growth comes from holding a few names that go up several times over, not fro
 
 ---
 
-## 5. How to reproduce
+## 5. What was done (3 Nov 2026)
+
+The owner approved fixes 1–4 and chose growth over hit rate and consistency for a 3–5 year horizon.
+
+| Fix | Done |
+|---|---|
+| 1 Intraday off | `state/sleeves.json` retires intraday and swing. A retired sleeve opens nothing and cancels queued entries; its exits still run. Once flat, the schedule gate never runs it, even from the cron-job.org trigger, and the next momentum run takes its cash. |
+| 2 Corporate actions | 30%+ open-and-close gaps freeze a holding: it is never sold by a rebalance, and a warning goes out every run until `state/momentum/corporate_actions.json` records the event. That file credits the 12 Tieramet shares (₹4,987). A second, entry-date split anchor catches splits Yahoo adjusts late. |
+| 3 Email | Can't be done from the repo: the Gmail app password is yours. Every run now says at the top of its log and job summary that alerts are off, until the three secrets exist (docs/SCHEDULING.md). |
+| 4 Orchestration | The bot workflows check out the branch tip, not the commit a queued run was created on: the stale checkout behind 12 Oct's lost state. An intraday session that would outlive the 6-hour job limit squares off first. |
+| Growth route | Swing's and intraday's cash moves into momentum on its next run. Holdings are topped up to an equal share at the following rebalance. Returns in the README are time-weighted, so the move counts as neither profit nor loss. Round 10 kept B4 top 10 for the bigger book (docs/RESEARCH.md). |
+
+A dry run on a copy of the 3 Nov state gave:
+- ₹51,682 (swing) and ₹44,079 (intraday) moved into momentum;
+- Tieramet credited at ₹4,987;
+- the book at ₹1,42,285, against ₹1,37,298 before;
+- new positions sized at about ₹14k (a tenth of the larger book).
+
+---
+
+## 6. How to reproduce
 
 ```bash
 python -m nsebot.research.diagnosis --out research_results     # or: research workflow, study=diagnosis
