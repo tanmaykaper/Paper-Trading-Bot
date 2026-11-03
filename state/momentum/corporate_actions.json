@@ -1,0 +1,10 @@
+[
+ {"id": "BHAGYANGR-2026-10-08-demerger",
+  "type": "demerger",
+  "symbol": "BHAGYANGR",
+  "ex_date": "2026-10-08",
+  "new_symbol": "TIERAMET",
+  "ratio": 1,
+  "value_per_share": 415.58,
+  "note": "Bhagyanagar India demerged its copper business into Tieramet Ltd: 1 Tieramet share for every share held, record date 8 Oct 2026 (NSE filing BHAGYANGR_25092026153938_Intimation_of_Record_Date). The sleeve held 12 shares through the ex-date. Value per share = BHAGYANGR's last close before the ex-date minus its ex-date open on Yahoo: the 12 shares lost ₹4,987 across that gap (research.diagnosis, run 40735738159). Tieramet's Yahoo symbol is assumed to be TIERAMET; if it lists under another, change new_symbol before it lists."}
+]

@@ -43,6 +43,19 @@ class Book:
             self._log(f'  ⚠ could not place protective stop for {pos.symbol}: {e}')
         return pos
 
+    def add(self, pos, fill):
+        """More shares of a position already held (a top-up): the entry price
+        becomes the average, margin and entry costs grow, cash pays."""
+        cost = fill.qty * fill.price
+        margin = cost / self.leverage
+        self.L.state['cash'] = self.L.cash - margin - fill.costs
+        qty = pos.qty + int(fill.qty)
+        pos.entry_price = (pos.entry_price * pos.qty + cost) / qty
+        pos.qty = qty
+        pos.meta['margin'] = float(pos.meta.get('margin', 0.0)) + margin
+        pos.meta['entry_costs'] = float(pos.meta.get('entry_costs', 0.0)) + fill.costs
+        return pos
+
     # ── exits ───────────────────────────────────────────────────────────────
     def close(self, pos, fill, when):
         gross = pos.sign * (fill.price - pos.entry_price) * pos.qty
