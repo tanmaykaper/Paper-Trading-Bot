@@ -12,8 +12,18 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+EMAIL_KEYS = ('EMAIL_SENDER', 'EMAIL_PASSWORD', 'EMAIL_RECIPIENT')
+EMAIL_OFF = ('Email alerts are OFF: the EMAIL_SENDER, EMAIL_PASSWORD and EMAIL_RECIPIENT repository secrets '
+             'are not set, so breaker trips, data failures and corporate-action warnings reach no one. '
+             'Setup takes about 5 minutes: docs/SCHEDULING.md, "Get the reports by email".')
+
+
+def email_configured():
+    return all(os.environ.get(k) for k in EMAIL_KEYS)
+
+
 def send_email(subject, body):
-    sender, pwd, to = (os.environ.get(k) for k in ('EMAIL_SENDER', 'EMAIL_PASSWORD', 'EMAIL_RECIPIENT'))
+    sender, pwd, to = (os.environ.get(k) for k in EMAIL_KEYS)
     if not (sender and pwd and to):
         return False
     msg = EmailMessage()
@@ -108,7 +118,7 @@ def momentum_report(rep, initial_cash, trades=None):
     when = ('**rebalanced today**' if rep.get('rebalanced')
             else f"next rebalance in {rep.get('next_rebalance_in', '—')} session(s)")
     lines = [f"## nsebot momentum — {rep['asof']}", '',
-             f"**Equity ₹{eq:,.0f}** ({(eq / initial_cash - 1) * 100:+.2f}% on ₹{initial_cash:,.0f}) · "
+             f"**Equity ₹{eq:,.0f}** ({(eq / initial_cash - 1) * 100:+.2f}% on the ₹{initial_cash:,.0f} put in) · "
              f"cash ₹{rep.get('cash', 0):,.0f} · {when}"
              + (f" · {rep['eligible']} eligible stocks" if rep.get('eligible') is not None else ''), '']
     if rep.get('status') != 'ok':
@@ -119,6 +129,12 @@ def momentum_report(rep, initial_cash, trades=None):
         lines += ['**Breakers (sales still run, buys stop):** ' + '; '.join(rep['breakers']), '']
     for w in rep.get('warnings') or []:
         lines += [f'⚠️ **{w}**', '']
+    for mode, amount in rep.get('received') or []:
+        lines += [f'**₹{amount:,.0f} moved in from the retired {mode} sleeve** — '
+                  + ('invested at today\'s rebalance' if rep.get('rebalanced') else 'invested at the next rebalance')
+                  + ': holdings topped up to an equal share, empty slots filled.', '']
+    if rep.get('actions'):
+        lines += ['### Corporate actions applied'] + _rows(rep['actions'], ['action', 'what happened']) + ['']
     if trades is not None:
         tx = fy_tax_estimate(trades, rep['asof'])
         lines += [f"{tx['fy']} realised: short-term ₹{tx['short']:+,.0f}, long-term ₹{tx['long']:+,.0f} · "
@@ -128,8 +144,9 @@ def momentum_report(rep, initial_cash, trades=None):
             for s, why, pnl, r in rep.get('closed') or []]
     lines += ['', '### Sold at the open'] + _rows(sold, ['symbol', 'reason', 'net ₹', 'net return'])
     lines += ['', '### Orders for the next open — sales'] + _rows(rep.get('selling'), ['symbol', 'qty', 'reason'])
-    lines += ['', '### Orders for the next open — buys'] + _rows(rep.get('placed'),
-                                                                ['symbol', 'qty', 'ref', 'rank', '12-1 momentum %'])
+    buys = list(rep.get('placed') or []) + [(f'{t[0]} (top-up)',) + tuple(t[1:]) for t in rep.get('topups') or []]
+    lines += ['', '### Orders for the next open — buys'] + _rows(buys, ['symbol', 'qty', 'ref', 'rank',
+                                                                        '12-1 momentum %'])
     hold = [(s, q, e, c, f'{(c / e - 1) * 100:+.1f}%' if c and e else '—')
             for s, q, e, c in rep.get('holdings') or []]
     lines += ['', '### Holdings'] + _rows(hold, ['symbol', 'qty', 'entry', 'last close', 'P&L'])

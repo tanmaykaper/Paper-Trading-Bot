@@ -308,6 +308,74 @@ Findings:
 4. **This is a noise measurement, not a choice.** No phase is "picked": the live book gets whatever phase its start date gives it. The honest expectation is the spread, not any single run.
 5. **Caveats from rounds 6–7 still apply:** stocks delisted before today are missing, tax is not modelled, and dividends are not credited in the paper ledger.
 
+## Round 9: diagnosis of the first live weeks (run 40735738159)
+
+Post-hoc and exploratory (`nsebot/research/diagnosis.py`), written after the live book fell 6.97% in its first 16 sessions. The full write-up, with live-trade forensics and the ranked fixes, is in [`docs/DIAGNOSIS.md`](DIAGNOSIS.md).
+
+1. **The live momentum loss is mostly accounting plus the market.**
+   - BHAGYANGR's demerger into Tieramet (record date 8 Oct 2026) was booked as an 89% loss.
+   - With its value kept across the gap, the sleeve made −4.6% from 5 to 28 Oct, against −5.1% for an equal-weight hold of the 971 eligible stocks.
+   - 19% of B4's 16-session stretches since 2018 were as bad or worse.
+2. **Corporate-action gaps are rising, but haven't touched the research.**
+   - Sessions that open and close 30%+ under the previous close: 44 since 2017, 16 of them in 2025 alone.
+   - B4's backtest held none, and adjusting for them moves its CAGR by under 2 points.
+3. **Raw 12-1 is the best of the scores tested on NSE data.**
+   - Forward one-month excess return rises with 12-1: +1.35% a month for names up 200%+.
+   - Its top 10 beat the eligible average by 1.9% a month on the untouched window.
+   - Every alternative tested picks a worse 10 from B4's own top 30: volatility-adjusted, NSE-style composite, frog-in-the-pan smoothness, 52-week high, low volatility and low max-gain.
+4. **One variant is worth a forward test: no buys within 63 sessions of a 15%+ single-day gain (V4).**
+   - It beat B4 at 4/5/5 of the rebalance timings (untouched / full / recent), with a −50.4% worst drawdown against −53.6%.
+   - It still helps at a 10% threshold and fades at 20%.
+   - Its gain is concentrated in 2023–26, and it was the best of 11 designs tried, so it goes to a pre-registered shadow test, not deployment.
+5. **B4's profile, as a holder lives it.**
+   - 53% of round trips win; payoff 2.6; the best tenth of trades carry all the profit.
+   - Half of all sessions are spent 20%+ below the previous peak.
+   - 28% of 252-session windows lose money.
+
+## Round 10: building the one momentum book for a 3–5 year horizon (run 41625574317)
+
+Pre-registered in commit 0c93565 (`nsebot/research/growth.py`) before any result was seen.
+
+**Why.** The owner chose growth over hit rate and consistency, so the whole ₹1.5L book moves into the momentum sleeve. The question is how to build that book.
+
+**Design.**
+- **Designs:** top 5, 7, 10 or 15, each with B4 alone or with V4 (no buy within 63 sessions of a 15%+ one-day gain). Eight in all.
+- **Book:** ₹1.5L, corporate-action-adjusted prices, all 5 rebalance phases.
+- **Measures:** rolling 3- and 5-year CAGRs from every 21st session since Jul 2018.
+
+**Rule.**
+1. Drop any design deeper than the 55% latch.
+2. The highest median 3-year CAGR wins.
+3. It replaces B4 top 10 only if it is 2+ points better *and* beats it at 3+ of 5 phases on the untouched window.
+
+| Design | Median 3-yr CAGR | 10th pct 3-yr | Worst 3-yr | Median 5-yr | Worst 5-yr | Worst max DD | Untouched phases beating B4 top 10 |
+|---|---|---|---|---|---|---|---|
+| B4 top 5 ⛔ | +27.4% | +13.4% | −2.7% | +28.4% | +3.5% | −65.4% | 1/5 |
+| B4 top 7 ⛔ | +37.0% | +22.9% | +11.1% | +38.1% | +11.4% | −66.3% | 1/5 |
+| **B4 top 10 (deployed)** | **+40.7%** | +27.8% | +14.3% | +39.4% | +15.4% | −53.4% | — |
+| B4 top 15 | +40.1% | +29.9% | +18.3% | +40.9% | +21.1% | −51.3% | 3/5 |
+| V4 top 5 ⛔ | +36.8% | +19.8% | −1.7% | +34.5% | +9.0% | −68.3% | 1/5 |
+| V4 top 7 ⛔ | +41.7% | +30.7% | +20.1% | +42.1% | +19.0% | −59.5% | 3/5 |
+| V4 top 10 | +45.3% | +32.4% | +23.0% | +44.9% | +25.4% | −50.4% | 2/5 |
+| V4 top 15 | +45.6% | +31.7% | +23.5% | +45.0% | +26.8% | −51.7% | 2/5 |
+
+_⛔ deeper than the 55% latch: out under rule 1._
+
+**Verdict (pre-registered): B4 top 10 stays.**
+- V4 top 15 had the highest median (+4.9 points) but beat B4 top 10 at only 2 of 5 phases on the untouched window, so rule 3 fails.
+- V4 is wired into the engine (`MomentumConfig.max_jump`), with a test that the live filter trades what the research measured, but it is off.
+
+Findings:
+1. **Concentration doesn't pay.**
+   - 5 or 7 names made *less* at the median than 10, or barely more.
+   - They fell 59–68% at worst, deep enough that the latch would have stopped their buying at the bottom.
+   - A 10-stock book is near the top of the curve.
+2. **V4's lead is a 2023–26 effect.** It is ahead on every rolling measure because most windows include those years, and level with B4 on the untouched window. A forward test decides it: re-run `study=growth` or `study=diagnosis` after 6–12 months and compare the two from Nov 2026 on.
+3. **What ₹1,50,000 became in B4 top 10:**
+   - **3 years:** worst ₹2.24L, median ₹4.17L, 90th percentile ₹5.07L.
+   - **5 years:** worst ₹3.07L, median ₹7.88L, 90th percentile ₹13.0L.
+   - These are upper bounds: delisted stocks are missing, 2018–26 held an exceptional smallcap boom, the windows overlap heavily, and tax isn't charged.
+
 ## What the evidence supports
 
 1. **Swing: S4b dip reversion is not proven, and round 5 points negative.**
@@ -331,3 +399,6 @@ Findings:
    - Round 7: the live engine reproduces the research within a few tenths of a point on real data.
    - Expect to beat the median smallcap fund, plausibly the best one, with drawdowns near 50%.
    - It runs live on paper from 5 Oct 2026 with its own 55% latch. Forward results are the remaining test.
+8. **From 3 Nov 2026 momentum is the whole book.**
+   - Intraday and swing are retired (round 9 and docs/DIAGNOSIS.md).
+   - Round 10 re-tested the book's size and the V4 filter for a 3–5 year horizon and kept B4 top 10 unchanged.

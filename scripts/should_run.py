@@ -14,9 +14,12 @@ in seconds, and the slot that finds work runs the bot.
                    state/<mode>/state.json
   intraday         run inside the entry window (09:15-13:30 IST on weekdays),
                    or until 15:05 while positions are open
+  retired          a sleeve retired in state/sleeves.json runs only while it
+                   still holds positions or pending orders, so its exits run;
+                   once flat it never runs, whatever triggered it
 
-A manual or external run (workflow_dispatch) always runs. Writes run=true or
-run=false and a reason to $GITHUB_OUTPUT.
+Otherwise a manual or external run (workflow_dispatch) always runs. Writes
+run=true or run=false and a reason to $GITHUB_OUTPUT.
 """
 
 import json
@@ -41,10 +44,13 @@ def expected_session(now):
     return d
 
 
-def decide(mode, now, state, event='schedule'):
+def decide(mode, now, state, event='schedule', plan=None):
+    state = state or {}
+    plan = plan or {}
+    if plan.get('status', 'active') != 'active' and not (state.get('positions') or state.get('pending')):
+        return False, f"sleeve {plan.get('status')} in state/sleeves.json and flat"
     if event == 'workflow_dispatch':
         return True, 'manual or external trigger: always runs'
-    state = state or {}
     if mode in ('swing', 'momentum'):
         want = expected_session(now).isoformat()
         last = state.get('last_processed')
@@ -66,11 +72,15 @@ def decide(mode, now, state, event='schedule'):
 def main(argv=None):
     mode = (argv if argv is not None else sys.argv[1:])[0]
     path = os.path.join('state', mode, 'state.json')
-    state = None
+    state = plan = None
     if os.path.exists(path):
         with open(path) as fh:
             state = json.load(fh)
-    run, reason = decide(mode, datetime.now(IST), state, os.environ.get('GITHUB_EVENT_NAME', 'schedule'))
+    plans = os.path.join('state', 'sleeves.json')
+    if os.path.exists(plans):
+        with open(plans) as fh:
+            plan = json.load(fh).get(mode)
+    run, reason = decide(mode, datetime.now(IST), state, os.environ.get('GITHUB_EVENT_NAME', 'schedule'), plan)
     print(f'{mode}: {"run" if run else "skip"} — {reason}')
     out = os.environ.get('GITHUB_OUTPUT')
     if out:

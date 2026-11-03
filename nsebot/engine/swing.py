@@ -26,7 +26,7 @@ import pandas as pd
 
 from ..broker.base import OrderSpec
 from ..market import TickTable, round_stop
-from ..risk import CircuitBreakers, allocate, estimate_edge, evaluate
+from ..risk import BreakerVerdict, CircuitBreakers, allocate, estimate_edge, evaluate
 from ..risk.exits import advance
 from ..universe import sector_of
 from .book import Book
@@ -40,8 +40,9 @@ STARVED_ALERT_SESSIONS = 3          # signals + free slots + nothing opened, thi
 class SwingEngine:
     mode = 'swing'
 
-    def __init__(self, cfg, broker, ledger, workdir='.', log=None, latch_dir=None):
+    def __init__(self, cfg, broker, ledger, workdir='.', log=None, latch_dir=None, retired=None):
         self.cfg = cfg
+        self.retired = retired                      # a reason: no new entries, exits still run
         self.sizing, self.exits = cfg.swing_sizing, cfg.swing_exits
         self.broker, self.L = broker, ledger
         self.breakers = CircuitBreakers(cfg.swing_breakers, self.mode,
@@ -64,6 +65,9 @@ class SwingEngine:
         self.book.closed_today = []
 
         # 1 ── pending entries ───────────────────────────────────────────────
+        if self.retired and st.get('pending'):          # a retired sleeve opens nothing, queued or new
+            report['cancelled'] += [(p['spec']['symbol'], 'sleeve retired') for p in st['pending']]
+            st['pending'] = []
         keep = []
         for p in st.get('pending', []):
             spec = p['spec']
@@ -112,6 +116,8 @@ class SwingEngine:
         price_of = lambda s: market.last_close(s, asof)                       # noqa: E731
         equity = self.book.equity(price_of)
         verdict = self.breakers.check(equity)
+        if self.retired:
+            verdict = BreakerVerdict(False, verdict.size_mult, verdict.reasons + [self.retired], verdict.flatten)
         regime = market.regime_at(asof)
         report.update({'equity': round(equity, 2), 'cash': round(L.cash, 2), 'regime': regime,
                        'breakers': verdict.reasons, 'size_mult': verdict.size_mult})

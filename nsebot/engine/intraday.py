@@ -30,7 +30,7 @@ from ..broker.base import OrderSpec
 from ..data import completed_bars
 from ..indicators import atr as atr_fn, median_turnover
 from ..market import IST, TickTable, at_time, round_stop
-from ..risk import CircuitBreakers, allocate, estimate_edge, evaluate
+from ..risk import BreakerVerdict, CircuitBreakers, allocate, estimate_edge, evaluate
 from ..risk.exits import advance
 from ..signals import IntradaySignalEngine
 from ..universe import INDEX_SYMBOL, INTRADAY_UNIVERSE, sector_of
@@ -42,8 +42,9 @@ logger = logging.getLogger(__name__)
 class IntradayEngine:
     mode = 'intraday'
 
-    def __init__(self, cfg, broker, ledger, workdir='.', log=None, universe=None, latch_dir=None):
+    def __init__(self, cfg, broker, ledger, workdir='.', log=None, universe=None, latch_dir=None, retired=None):
         self.cfg = cfg
+        self.retired = retired                      # a reason: no new entries, exits still run
         self.sig = IntradaySignalEngine(cfg.intraday)
         self.sizing, self.exits = cfg.intraday_sizing, cfg.intraday_exits
         self.broker, self.L = broker, ledger
@@ -132,6 +133,8 @@ class IntradayEngine:
         # 4 ── breakers ──────────────────────────────────────────────────────
         equity = self.book.equity(price_of)
         verdict = self.breakers.check(equity, open_pnl=self.book.open_pnl(price_of))
+        if self.retired:
+            verdict = BreakerVerdict(False, verdict.size_mult, verdict.reasons + [self.retired], verdict.flatten)
         rep['breakers'] = verdict.reasons
         if verdict.flatten and self.L.positions:
             for pos in list(self.L.positions):
@@ -198,13 +201,13 @@ class IntradayEngine:
         self.log(f'  ▼ {pos.side} {pos.symbol} {t["exit_reason"]} @ ₹{t["exit_price"]:.2f} '
                  f'net ₹{t["net_pnl"]:+,.0f} ({(t["net_r"] or 0):+.2f}R)')
 
-    def finish(self, now, last_prices=None):
+    def finish(self, now, last_prices=None, reason='end-of-session square-off'):
         """End of session: nothing may remain open; write the day's equity row."""
         now = pd.Timestamp(now)
         rep = {'closed': []}
         for pos in list(self.L.positions):
             px = (last_prices or {}).get(pos.symbol) or pos.entry_price
-            self._exit(pos, px, 'end-of-session square-off', now, rep)
+            self._exit(pos, px, reason, now, rep)
         self.L.state['pending'] = []
         equity = self.L.cash
         peak = float(self.breakers.state().get('peak_equity') or equity)
@@ -218,11 +221,20 @@ class IntradayEngine:
         return rep
 
     # ─────────────────────────────────────────────────────────────────────────
-    def run_session(self, provider, clock=None, sleep=_time.sleep, latency_s=25, end=None):
-        """Live loop: poll every completed 5-minute bar until the square-off."""
+    def run_session(self, provider, clock=None, sleep=_time.sleep, latency_s=25, end=None, deadline=None):
+        """Live loop: poll every completed 5-minute bar until the square-off.
+
+        `deadline` is when the job hosting this loop will be killed (GitHub
+        stops a job after 6 hours). A session that would outlive it squares
+        off early instead: on 12 Oct a run started at 08:26 was killed at
+        14:27 with a position open, and the ledger carried it overnight."""
         clock = clock or (lambda: pd.Timestamp.now(tz=IST))
         today = clock()
         end = end or at_time(today, self.exits.square_off) + pd.Timedelta(minutes=2)
+        cut = deadline is not None and pd.Timestamp(deadline) < end
+        if cut:
+            end = pd.Timestamp(deadline)
+            self.log(f'  this job is stopped at {end:%H:%M} by its time limit — squaring off then')
         daily = provider.daily(self.universe, lookback_days=60)
         reports = []
         had_session = False
@@ -250,7 +262,8 @@ class IntradayEngine:
             last = {s: float(b['close'].iloc[-1]) for s, b in bars.items() if len(b)}
         except Exception as e:
             self.log(f'  could not fetch final prices ({e}) — closing at entry price')
-        reports.append(self.finish(clock(), last))
+        reports.append(self.finish(clock(), last, 'square-off before the job time limit' if cut
+                                   else 'end-of-session square-off'))
         return reports
 
     @staticmethod

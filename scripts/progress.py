@@ -23,6 +23,12 @@ real and you had sold everything at that day's close:
             nothing. Tax-year boundaries, carried-forward losses and
             dividends are not modelled.
 
+Money moved between bots (a retired sleeve's cash swept into another, see
+nsebot/sleeves.py) changes what each bot was given, not what the book is
+worth. Each bot's return is time-weighted, so a transfer is never counted
+as profit or loss; the book's total is still measured against the money put
+in at the start.
+
 Standard library only, so it runs before anything is installed. The output
 depends only on state/, so running it again changes nothing.
 """
@@ -62,6 +68,27 @@ class Bot:
     rows: list = field(default_factory=list)      # (date, equity, open_positions, open_value), one per session
     trades: int = 0
     holding: int = 0
+    flows: list = field(default_factory=list)     # (date, rupees in (+) or out (−)), money moved between bots
+    status: str = 'active'
+
+    def capital_on(self, day):
+        """What the bot had been given by the close of `day`."""
+        return self.capital + sum(a for d, a in self.flows if d <= day)
+
+    def twr(self, day):
+        """Time-weighted return to the close of `day`: each session's change
+        net of money moved in or out that day, chained."""
+        moved = {}
+        for d, a in self.flows:
+            moved[d] = moved.get(d, 0.0) + a
+        growth, prev = 1.0, self.capital
+        for d, eq, _, _ in self.rows:
+            if d > day:
+                break
+            if prev > 0:
+                growth *= (eq - moved.get(d, 0.0)) / prev
+            prev = eq
+        return growth - 1
 
     def on(self, day):
         """(equity, open positions, open value) at the close of `day`; the money
@@ -81,14 +108,21 @@ def _num(x, cast=float, default=0):
         return default
 
 
-def load_bot(state_dir, mode, name):
+def load_bot(state_dir, mode, name, plan=None):
     d = os.path.join(state_dir, mode)
     state = {}
     if os.path.exists(os.path.join(d, 'state.json')):
         with open(os.path.join(d, 'state.json')) as fh:
             state = json.load(fh)
+    flows = []
+    for f in state.get('flows') or []:
+        try:
+            flows.append((date.fromisoformat(str(f['session'])[:10]), _num(f.get('amount'))))
+        except (KeyError, TypeError, ValueError):
+            continue
     bot = Bot(mode, name, _num(state.get('initial_cash'), default=DEFAULT_CAPITAL),
-              holding=len(state.get('positions') or []))
+              holding=len(state.get('positions') or []), flows=flows,
+              status=((plan or {}).get(mode) or {}).get('status', 'active'))
     if os.path.exists(os.path.join(d, 'equity.csv')):
         by_day = {}
         with open(os.path.join(d, 'equity.csv'), newline='') as fh:
@@ -101,13 +135,17 @@ def load_bot(state_dir, mode, name):
                                _num(r.get('open_positions'), int), _num(r.get('open_value')))
         bot.rows = [by_day[k] for k in sorted(by_day)]
     if os.path.exists(os.path.join(d, 'trades.csv')):
-        with open(os.path.join(d, 'trades.csv'), newline='') as fh:
-            bot.trades = sum(1 for _ in csv.DictReader(fh))
+        with open(os.path.join(d, 'trades.csv'), newline='') as fh:     # a corporate-action credit is no trade
+            bot.trades = sum(1 for r in csv.DictReader(fh) if r.get('trigger') != 'corporate_action')
     return bot
 
 
 def load(state_dir):
-    return [load_bot(state_dir, mode, name) for mode, name in BOTS]
+    plan = {}
+    if os.path.exists(os.path.join(state_dir, 'sleeves.json')):
+        with open(os.path.join(state_dir, 'sleeves.json')) as fh:
+            plan = json.load(fh)
+    return [load_bot(state_dir, mode, name, plan) for mode, name in BOTS]
 
 
 def selling_cost(mode, open_value, open_positions):
@@ -146,7 +184,7 @@ def snapshot(bots, day):
         value += eq
         selling += cost
         by_bot[b.mode] = eq
-        gain['delivery' if b.mode in DELIVERY else 'intraday'] += eq - cost - b.capital
+        gain['delivery' if b.mode in DELIVERY else 'intraday'] += eq - cost - b.capital_on(day)
     tax = STCG_TAX * max(gain['delivery'], 0.0) + SPECULATIVE_TAX * max(gain['intraday'], 0.0)
     return Snapshot(day, value, selling, tax, by_bot)
 
@@ -296,12 +334,14 @@ def block(bots, snaps):
         '|---|---|---|---|---|---|---|']
     for b in bots:
         v = now.by_bot[b.mode]
-        change = inr(v - prev.by_bot[b.mode], sign=True) if prev else '—'
+        moved = sum(a for d, a in b.flows if d == now.day)
+        change = inr(v - prev.by_bot[b.mode] - moved, sign=True) if prev else '—'
+        name = b.name if b.status == 'active' else f'{b.name} (retired)'
         if b.rows:
-            lines.append(f'| {b.name} | {when(b.rows[0][0])} | {inr(v)} | {pct(v / b.capital - 1)} | {change} '
+            lines.append(f'| {name} | {when(b.rows[0][0])} | {inr(v)} | {pct(b.twr(now.day))} | {change} '
                          f'| {b.trades} | {b.holding} |')
         else:
-            lines.append(f'| {b.name} | not started | {inr(v)} | — | — | {b.trades} | {b.holding} |')
+            lines.append(f'| {name} | not started | {inr(v)} | — | — | {b.trades} | {b.holding} |')
     change = inr(now.value - prev.value, sign=True) if prev else '—'
     lines += [
         f'| **All three** | | **{inr(now.value)}** | **{pct(now.value / capital - 1)}** | {change} '
@@ -309,10 +349,11 @@ def block(bots, snaps):
         f'| Selling the open positions | | {inr(-now.selling)} | | | | |',
         f'| Tax on the profit | | {inr(-now.tax)} | | | | |',
         f'| **In your pocket** | | **{inr(now.pocket)}** | **{pct(now.pocket / capital - 1)}** | | | |', '',
-        '<sub>Value is cash plus open positions at the close, after the charges already paid. Tax is 20.8% on '
-        'delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the '
-        'top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot '
-        'after its run.</sub>',
+        '<sub>Value is cash plus open positions at the close, after the charges already paid. A bot\'s return '
+        'is time-weighted, so money moved between bots counts as neither profit nor loss; a retired bot\'s cash '
+        'moves to momentum once it is flat (state/sleeves.json). Tax is 20.8% on delivery profits (short-term '
+        'capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. '
+        'Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>',
         END]
     return '\n'.join(lines)
 

@@ -44,6 +44,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:                            # the branch as it is now: a run that waited in the queue
+          ref: ${{ github.ref_name }}    # must see the state its predecessor saved, not the commit it was queued on
       - name: Anything to do?             # seconds; skips the rest when the work is already done
         id: gate
         run: python3 scripts/should_run.py intraday
