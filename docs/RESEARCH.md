@@ -332,6 +332,50 @@ Post-hoc and exploratory (`nsebot/research/diagnosis.py`), written after the liv
    - Half of all sessions are spent 20%+ below the previous peak.
    - 28% of 252-session windows lose money.
 
+## Round 10: building the one momentum book for a 3–5 year horizon (run 41625574317)
+
+Pre-registered in commit 0c93565 (`nsebot/research/growth.py`) before any result was seen.
+
+**Why.** The owner chose growth over hit rate and consistency, so the whole ₹1.5L book moves into the momentum sleeve. The question is how to build that book.
+
+**Design.**
+- **Designs:** top 5, 7, 10 or 15, each with B4 alone or with V4 (no buy within 63 sessions of a 15%+ one-day gain). Eight in all.
+- **Book:** ₹1.5L, corporate-action-adjusted prices, all 5 rebalance phases.
+- **Measures:** rolling 3- and 5-year CAGRs from every 21st session since Jul 2018.
+
+**Rule.**
+1. Drop any design deeper than the 55% latch.
+2. The highest median 3-year CAGR wins.
+3. It replaces B4 top 10 only if it is 2+ points better *and* beats it at 3+ of 5 phases on the untouched window.
+
+| Design | Median 3-yr CAGR | 10th pct 3-yr | Worst 3-yr | Median 5-yr | Worst 5-yr | Worst max DD | Untouched phases beating B4 top 10 |
+|---|---|---|---|---|---|---|---|
+| B4 top 5 ⛔ | +27.4% | +13.4% | −2.7% | +28.4% | +3.5% | −65.4% | 1/5 |
+| B4 top 7 ⛔ | +37.0% | +22.9% | +11.1% | +38.1% | +11.4% | −66.3% | 1/5 |
+| **B4 top 10 (deployed)** | **+40.7%** | +27.8% | +14.3% | +39.4% | +15.4% | −53.4% | — |
+| B4 top 15 | +40.1% | +29.9% | +18.3% | +40.9% | +21.1% | −51.3% | 3/5 |
+| V4 top 5 ⛔ | +36.8% | +19.8% | −1.7% | +34.5% | +9.0% | −68.3% | 1/5 |
+| V4 top 7 ⛔ | +41.7% | +30.7% | +20.1% | +42.1% | +19.0% | −59.5% | 3/5 |
+| V4 top 10 | +45.3% | +32.4% | +23.0% | +44.9% | +25.4% | −50.4% | 2/5 |
+| V4 top 15 | +45.6% | +31.7% | +23.5% | +45.0% | +26.8% | −51.7% | 2/5 |
+
+_⛔ deeper than the 55% latch: out under rule 1._
+
+**Verdict (pre-registered): B4 top 10 stays.**
+- V4 top 15 had the highest median (+4.9 points) but beat B4 top 10 at only 2 of 5 phases on the untouched window, so rule 3 fails.
+- V4 is wired into the engine (`MomentumConfig.max_jump`), with a test that the live filter trades what the research measured, but it is off.
+
+Findings:
+1. **Concentration doesn't pay.**
+   - 5 or 7 names made *less* at the median than 10, or barely more.
+   - They fell 59–68% at worst, deep enough that the latch would have stopped their buying at the bottom.
+   - A 10-stock book is near the top of the curve.
+2. **V4's lead is a 2023–26 effect.** It is ahead on every rolling measure because most windows include those years, and level with B4 on the untouched window. A forward test decides it: re-run `study=growth` or `study=diagnosis` after 6–12 months and compare the two from Nov 2026 on.
+3. **What ₹1,50,000 became in B4 top 10:**
+   - **3 years:** worst ₹2.24L, median ₹4.17L, 90th percentile ₹5.07L.
+   - **5 years:** worst ₹3.07L, median ₹7.88L, 90th percentile ₹13.0L.
+   - These are upper bounds: delisted stocks are missing, 2018–26 held an exceptional smallcap boom, the windows overlap heavily, and tax isn't charged.
+
 ## What the evidence supports
 
 1. **Swing: S4b dip reversion is not proven, and round 5 points negative.**
@@ -355,3 +399,6 @@ Post-hoc and exploratory (`nsebot/research/diagnosis.py`), written after the liv
    - Round 7: the live engine reproduces the research within a few tenths of a point on real data.
    - Expect to beat the median smallcap fund, plausibly the best one, with drawdowns near 50%.
    - It runs live on paper from 5 Oct 2026 with its own 55% latch. Forward results are the remaining test.
+8. **From 3 Nov 2026 momentum is the whole book.**
+   - Intraday and swing are retired (round 9 and docs/DIAGNOSIS.md).
+   - Round 10 re-tested the book's size and the V4 filter for a 3–5 year horizon and kept B4 top 10 unchanged.

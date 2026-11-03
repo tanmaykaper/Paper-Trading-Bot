@@ -82,7 +82,7 @@ Sign up (free). For each row below, click **Create cronjob** and fill in the sam
 |---|---|---|
 | `nsebot swing` | `main.yml` | 17:20 |
 | `nsebot momentum` | `momentum.yml` | 17:45 |
-| `nsebot intraday` | `intraday.yml` | 09:22 |
+| `nsebot intraday` | `intraday.yml` | 09:22 (not needed while intraday is retired: the gate stops the run in seconds; delete or pause this job) |
 
 The settings for each job:
 
@@ -114,7 +114,9 @@ Save each job, then click **Test run**. It should report `204`, and a run should
 
 ---
 
-## Get the reports by email (optional, about 5 minutes)
+## Get the reports by email (about 5 minutes — strongly recommended)
+
+Until this is set up, every run prints "Email alerts are OFF" at the top of its log and job summary. Without email, a breaker trip, a data failure or a corporate-action warning reaches no one. On 9 Oct 2026 a holding fell 89% overnight and nobody was told.
 
 Every run writes its report to the run's summary page under **Actions**. To get it by email instead, add three repository secrets. The bots then email you when they trade, when a breaker trips, when a warning fires, and when data fails.
 
