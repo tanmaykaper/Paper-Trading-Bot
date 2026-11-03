@@ -1,7 +1,7 @@
 {
  "mode": "intraday",
  "initial_cash": 50000.0,
- "cash": 44078.752530173835,
+ "cash": 0.0,
  "positions": [],
  "pending": [],
  "breakers": {
@@ -12,7 +12,7 @@
   "session": "2026-11-03",
   "trades_today": 5,
   "realised_today": -312.7089747043087,
-  "peak_equity": 51361.848931443434,
+  "peak_equity": 0.0,
   "halted_for_session": false,
   "latched": false
  },
@@ -25,5 +25,12 @@
   "JSWSTEEL"
  ],
  "trade_seq": 75,
- "session": "2026-11-03"
+ "session": "2026-11-03",
+ "flows": [
+  {
+   "session": "2026-11-03",
+   "amount": -44078.75,
+   "with": "momentum"
+  }
+ ]
 }

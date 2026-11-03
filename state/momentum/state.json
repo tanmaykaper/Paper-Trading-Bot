@@ -1,7 +1,7 @@
 {
  "mode": "momentum",
  "initial_cash": 50000.0,
- "cash": 5271.604677191056,
+ "cash": 101032.17,
  "positions": [
   {
    "symbol": "CUPID",
@@ -23,9 +23,10 @@
     "score": 5.3241,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-CUPID-1",
-    "anchor_date": "2026-11-02",
-    "anchor_open": 326.45001220703125,
-    "anchor_close": 340.5
+    "anchor_date": "2026-11-03",
+    "anchor_open": 344.8999938964844,
+    "anchor_close": 338.5,
+    "gap_checked": "2026-11-03"
    }
   },
   {
@@ -48,9 +49,10 @@
     "score": 4.795,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-STLTECH-2",
-    "anchor_date": "2026-11-02",
-    "anchor_open": 783.2999877929688,
-    "anchor_close": 783.2999877929688
+    "anchor_date": "2026-11-03",
+    "anchor_open": 757.25,
+    "anchor_close": 759.6500244140625,
+    "gap_checked": "2026-11-03"
    }
   },
   {
@@ -73,9 +75,10 @@
     "score": 3.6712,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-SIGMAADV-3",
-    "anchor_date": "2026-11-02",
-    "anchor_open": 876.0,
-    "anchor_close": 901.0499877929688
+    "anchor_date": "2026-11-03",
+    "anchor_open": 917.9000244140625,
+    "anchor_close": 894.7999877929688,
+    "gap_checked": "2026-11-03"
    }
   },
   {
@@ -98,9 +101,10 @@
     "score": 3.2975,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-BLISSGVS-4",
-    "anchor_date": "2026-11-02",
-    "anchor_open": 620.0,
-    "anchor_close": 617.2000122070312
+    "anchor_date": "2026-11-03",
+    "anchor_open": 618.0,
+    "anchor_close": 631.2999877929688,
+    "gap_checked": "2026-11-03"
    }
   },
   {
@@ -123,9 +127,10 @@
     "score": 2.5397,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-INDSWFTLAB-7",
-    "anchor_date": "2026-11-02",
-    "anchor_open": 366.1499938964844,
-    "anchor_close": 353.25
+    "anchor_date": "2026-11-03",
+    "anchor_open": 357.75,
+    "anchor_close": 343.75,
+    "gap_checked": "2026-11-03"
    }
   },
   {
@@ -148,9 +153,10 @@
     "score": 1.9902,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-HFCL-8",
-    "anchor_date": "2026-11-02",
-    "anchor_open": 219.72999572753906,
-    "anchor_close": 219.72999572753906
+    "anchor_date": "2026-11-03",
+    "anchor_open": 212.5500030517578,
+    "anchor_close": 217.3000030517578,
+    "gap_checked": "2026-11-03"
    }
   },
   {
@@ -173,9 +179,10 @@
     "score": 1.913,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-AEROFLEX-9",
-    "anchor_date": "2026-11-02",
-    "anchor_open": 524.0,
-    "anchor_close": 513.7999877929688
+    "anchor_date": "2026-11-03",
+    "anchor_open": 514.9500122070312,
+    "anchor_close": 512.5999755859375,
+    "gap_checked": "2026-11-03"
    }
   },
   {
@@ -198,9 +205,10 @@
     "score": 2.1416,
     "last_bar": "2026-10-12 00:00:00",
     "order_id": "PAPER-SAKAR-1",
-    "anchor_date": "2026-11-02",
-    "anchor_open": 930.0999755859375,
-    "anchor_close": 934.4500122070312
+    "anchor_date": "2026-11-03",
+    "anchor_open": 950.0,
+    "anchor_close": 944.5499877929688,
+    "gap_checked": "2026-11-03"
    }
   },
   {
@@ -223,30 +231,253 @@
     "score": 2.0933,
     "last_bar": "2026-10-19 00:00:00",
     "order_id": "PAPER-TBZ-1",
-    "anchor_date": "2026-11-02",
-    "anchor_open": 587.0999755859375,
-    "anchor_close": 596.75
+    "anchor_date": "2026-11-03",
+    "anchor_open": 593.75,
+    "anchor_close": 577.7999877929688,
+    "gap_checked": "2026-11-03"
+   }
+  },
+  {
+   "symbol": "TIERAMET",
+   "mode": "momentum",
+   "side": "LONG",
+   "qty": 12,
+   "entry_price": 415.58,
+   "initial_stop": 0.0,
+   "stop": 0.0,
+   "entry_time": "2026-10-08 00:00:00",
+   "atr": 0.0,
+   "bars_held": 0,
+   "best_price": 415.58,
+   "meta": {
+    "trade_id": "M20261008-TIERAMET-13",
+    "margin": 4986.96,
+    "entry_costs": 0.0,
+    "trigger": "demerger of BHAGYANGR",
+    "score": null,
+    "last_bar": "2026-10-08",
+    "order_id": "",
+    "corporate_action": "BHAGYANGR-2026-10-08-demerger",
+    "awaiting_listing": true,
+    "gap_checked": "2026-11-03"
    }
   }
  ],
- "pending": [],
+ "pending": [
+  {
+   "action": "TOPUP",
+   "spec": {
+    "symbol": "STLTECH",
+    "side": "LONG",
+    "qty": 14,
+    "product": "CNC",
+    "ref_price": 759.6500244140625,
+    "stop": 0.0,
+    "signal_time": "2026-11-03 00:00:00",
+    "tag": "nbt1103STLTECH",
+    "meta": {
+     "trigger": "momentum_12_1",
+     "score": 6.9553,
+     "rank": 1
+    }
+   },
+   "order_id": "PAPER-STLTECH-1",
+   "placed": "2026-11-03 00:00:00"
+  },
+  {
+   "action": "TOPUP",
+   "spec": {
+    "symbol": "CUPID",
+    "side": "LONG",
+    "qty": 25,
+    "product": "CNC",
+    "ref_price": 338.5,
+    "stop": 0.0,
+    "signal_time": "2026-11-03 00:00:00",
+    "tag": "nbt1103CUPID",
+    "meta": {
+     "trigger": "momentum_12_1",
+     "score": 5.6518,
+     "rank": 2
+    }
+   },
+   "order_id": "PAPER-CUPID-2",
+   "placed": "2026-11-03 00:00:00"
+  },
+  {
+   "action": "TOPUP",
+   "spec": {
+    "symbol": "SIGMAADV",
+    "side": "LONG",
+    "qty": 11,
+    "product": "CNC",
+    "ref_price": 894.7999877929688,
+    "stop": 0.0,
+    "signal_time": "2026-11-03 00:00:00",
+    "tag": "nbt1103SIGMAADV",
+    "meta": {
+     "trigger": "momentum_12_1",
+     "score": 5.098,
+     "rank": 3
+    }
+   },
+   "order_id": "PAPER-SIGMAADV-3",
+   "placed": "2026-11-03 00:00:00"
+  },
+  {
+   "action": "TOPUP",
+   "spec": {
+    "symbol": "BLISSGVS",
+    "side": "LONG",
+    "qty": 15,
+    "product": "CNC",
+    "ref_price": 631.2999877929688,
+    "stop": 0.0,
+    "signal_time": "2026-11-03 00:00:00",
+    "tag": "nbt1103BLISSGVS",
+    "meta": {
+     "trigger": "momentum_12_1",
+     "score": 3.4861,
+     "rank": 4
+    }
+   },
+   "order_id": "PAPER-BLISSGVS-4",
+   "placed": "2026-11-03 00:00:00"
+  },
+  {
+   "action": "TOPUP",
+   "spec": {
+    "symbol": "INDSWFTLAB",
+    "side": "LONG",
+    "qty": 29,
+    "product": "CNC",
+    "ref_price": 343.75,
+    "stop": 0.0,
+    "signal_time": "2026-11-03 00:00:00",
+    "tag": "nbt1103INDSWFTLAB",
+    "meta": {
+     "trigger": "momentum_12_1",
+     "score": 2.8763,
+     "rank": 6
+    }
+   },
+   "order_id": "PAPER-INDSWFTLAB-5",
+   "placed": "2026-11-03 00:00:00"
+  },
+  {
+   "action": "TOPUP",
+   "spec": {
+    "symbol": "TBZ",
+    "side": "LONG",
+    "qty": 19,
+    "product": "CNC",
+    "ref_price": 577.7999877929688,
+    "stop": 0.0,
+    "signal_time": "2026-11-03 00:00:00",
+    "tag": "nbt1103TBZ",
+    "meta": {
+     "trigger": "momentum_12_1",
+     "score": 2.4343,
+     "rank": 8
+    }
+   },
+   "order_id": "PAPER-TBZ-6",
+   "placed": "2026-11-03 00:00:00"
+  },
+  {
+   "action": "TOPUP",
+   "spec": {
+    "symbol": "HFCL",
+    "side": "LONG",
+    "qty": 46,
+    "product": "CNC",
+    "ref_price": 217.3000030517578,
+    "stop": 0.0,
+    "signal_time": "2026-11-03 00:00:00",
+    "tag": "nbt1103HFCL",
+    "meta": {
+     "trigger": "momentum_12_1",
+     "score": 2.069,
+     "rank": 12
+    }
+   },
+   "order_id": "PAPER-HFCL-7",
+   "placed": "2026-11-03 00:00:00"
+  },
+  {
+   "action": "TOPUP",
+   "spec": {
+    "symbol": "AEROFLEX",
+    "side": "LONG",
+    "qty": 18,
+    "product": "CNC",
+    "ref_price": 512.5999755859375,
+    "stop": 0.0,
+    "signal_time": "2026-11-03 00:00:00",
+    "tag": "nbt1103AEROFLEX",
+    "meta": {
+     "trigger": "momentum_12_1",
+     "score": 2.0282,
+     "rank": 13
+    }
+   },
+   "order_id": "PAPER-AEROFLEX-8",
+   "placed": "2026-11-03 00:00:00"
+  },
+  {
+   "action": "TOPUP",
+   "spec": {
+    "symbol": "SAKAR",
+    "side": "LONG",
+    "qty": 11,
+    "product": "CNC",
+    "ref_price": 944.5499877929688,
+    "stop": 0.0,
+    "signal_time": "2026-11-03 00:00:00",
+    "tag": "nbt1103SAKAR",
+    "meta": {
+     "trigger": "momentum_12_1",
+     "score": 2.0167,
+     "rank": 14
+    }
+   },
+   "order_id": "PAPER-SAKAR-9",
+   "placed": "2026-11-03 00:00:00"
+  }
+ ],
  "breakers": {
   "consecutive_losses": 0,
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-11-02",
+  "session": "2026-11-03",
   "trades_today": 0,
   "realised_today": 0.0,
-  "peak_equity": 51018.01948813152,
+  "peak_equity": 146778.58948813152,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-11-02",
+ "last_processed": "2026-11-03",
  "traded_today": [],
- "trade_seq": 12,
+ "trade_seq": 13,
  "low_eligible_runs": 0,
- "last_eligible": 876,
+ "last_eligible": 858,
  "starved_rebalances": 0,
- "sessions_since_rebalance": 4
+ "sessions_since_rebalance": 0,
+ "flows": [
+  {
+   "session": "2026-11-03",
+   "amount": 51681.82,
+   "with": "swing"
+  },
+  {
+   "session": "2026-11-03",
+   "amount": 44078.75,
+   "with": "intraday"
+  }
+ ],
+ "deploy_inflow": false,
+ "actions_applied": [
+  "BHAGYANGR-2026-10-08-demerger"
+ ]
 }
