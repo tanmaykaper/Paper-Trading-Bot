@@ -407,7 +407,10 @@ class MomentumEngine:
                         pos.meta['ca_suspect'] = {'date': str(f.index[i].date()), 'prev_close': prev,
                                                   'open': o, 'close': c}
                         break
-            pos.meta['gap_checked'] = str(asof.date())
+            if f is not None and len(f):                  # only as far as Yahoo has delivered: a late
+                seen = min(f.index[-1], pd.Timestamp(asof))   # bar is still checked when it arrives
+                if seen > pd.Timestamp(since):
+                    pos.meta['gap_checked'] = str(seen.date())
             g = pos.meta.get('ca_suspect')
             if g:
                 report['warnings'].append(
@@ -479,6 +482,9 @@ class MomentumEngine:
                              'last_bar': day, 'order_id': '', 'corporate_action': aid,
                              'awaiting_listing': True, 'gap_checked': str(asof.date())})
         self.L.positions.append(pos)
+        t = self.L.closed_trades()
+        if len(t) and f'{aid}-credit' in set(t['trade_id'].astype(str)):    # a re-run after a failed save
+            return f'{qty} {new} credited at ₹{value:,.2f} each (journal row already written)'
         self.L.append_trade({'trade_id': f'{aid}-credit', 'mode': self.mode, 'symbol': sym, 'side': 'LONG',
                              'qty': held, 'entry_time': str(ex), 'entry_price': 0.0, 'initial_stop': 0.0,
                              'exit_time': str(pd.Timestamp(asof)), 'exit_price': round(qty * value / held, 2),
