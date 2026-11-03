@@ -140,6 +140,19 @@ def test_a_demerger_gap_is_held_alerted_and_credited_once_recorded(tmp_path):
     assert ('S0', 1 * qty, 'no longer eligible') in rep['selling']  # released to the normal rules
 
 
+def test_a_gap_on_a_day_yahoo_delivers_late_is_still_caught(tmp_path):
+    cfg = small_cfg()
+    u, idx, dates = small_world()
+    eng, L = engine(tmp_path, cfg)
+    for d in dates[60:62]:
+        eng.run(MomentumMarket(u, idx, cfg.momentum), d)
+    gapped = dict(u, S0=_scale(u['S0'], 62, 0.1))
+    late = dict(gapped, S0=gapped['S0'].iloc[:62])                 # the 62nd bar isn't out yet
+    assert not any('CORPORATE' in w for w in eng.run(MomentumMarket(late, idx, cfg.momentum), dates[62])['warnings'])
+    rep = eng.run(MomentumMarket(gapped, idx, cfg.momentum), dates[63])
+    assert any(w.startswith('CORPORATE ACTION? S0') for w in rep['warnings'])
+
+
 def test_a_split_yahoo_adjusts_late_is_caught_by_the_entry_anchor(tmp_path):
     cfg = small_cfg()
     u, idx, dates = small_world()
