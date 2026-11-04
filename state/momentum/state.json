@@ -1,14 +1,14 @@
 {
  "mode": "momentum",
  "initial_cash": 50000.0,
- "cash": 101032.17,
+ "cash": 13177.668182147328,
  "positions": [
   {
    "symbol": "CUPID",
    "mode": "momentum",
    "side": "LONG",
-   "qty": 16,
-   "entry_price": 311.15,
+   "qty": 41,
+   "entry_price": 328.65,
    "initial_stop": 0.0,
    "stop": 0.0,
    "entry_time": "2026-10-06 00:00:00",
@@ -17,24 +17,24 @@
    "best_price": 311.15,
    "meta": {
     "trade_id": "M20261006-CUPID-1",
-    "margin": 4978.4,
-    "entry_costs": 5.905507518399999,
+    "margin": 13474.65,
+    "entry_costs": 15.983980170899997,
     "trigger": "momentum_12_1",
     "score": 5.3241,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-CUPID-1",
-    "anchor_date": "2026-11-03",
-    "anchor_open": 344.8999938964844,
-    "anchor_close": 338.5,
-    "gap_checked": "2026-11-03"
+    "anchor_date": "2026-11-04",
+    "anchor_open": 339.6499938964844,
+    "anchor_close": 336.5,
+    "gap_checked": "2026-11-04"
    }
   },
   {
    "symbol": "STLTECH",
    "mode": "momentum",
    "side": "LONG",
-   "qty": 4,
-   "entry_price": 1035.0,
+   "qty": 18,
+   "entry_price": 798.3222222222223,
    "initial_stop": 0.0,
    "stop": 0.0,
    "entry_time": "2026-10-06 00:00:00",
@@ -43,24 +43,24 @@
    "best_price": 1035.0,
    "meta": {
     "trade_id": "M20261006-STLTECH-2",
-    "margin": 4140.0,
-    "entry_costs": 4.91097564,
+    "margin": 14369.800000000001,
+    "entry_costs": 17.0458303748,
     "trigger": "momentum_12_1",
     "score": 4.795,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-STLTECH-2",
-    "anchor_date": "2026-11-03",
-    "anchor_open": 757.25,
-    "anchor_close": 759.6500244140625,
-    "gap_checked": "2026-11-03"
+    "anchor_date": "2026-11-04",
+    "anchor_open": 730.2999877929688,
+    "anchor_close": 797.5999755859375,
+    "gap_checked": "2026-11-04"
    }
   },
   {
    "symbol": "SIGMAADV",
    "mode": "momentum",
    "side": "LONG",
-   "qty": 4,
-   "entry_price": 1107.6,
+   "qty": 15,
+   "entry_price": 926.43,
    "initial_stop": 0.0,
    "stop": 0.0,
    "entry_time": "2026-10-06 00:00:00",
@@ -69,24 +69,24 @@
    "best_price": 1107.6,
    "meta": {
     "trade_id": "M20261006-SIGMAADV-3",
-    "margin": 4430.4,
-    "entry_costs": 5.255455670399999,
+    "margin": 13896.449999999999,
+    "entry_costs": 16.484330297699998,
     "trigger": "momentum_12_1",
     "score": 3.6712,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-SIGMAADV-3",
-    "anchor_date": "2026-11-03",
-    "anchor_open": 917.9000244140625,
-    "anchor_close": 894.7999877929688,
-    "gap_checked": "2026-11-03"
+    "anchor_date": "2026-11-04",
+    "anchor_open": 860.0999755859375,
+    "anchor_close": 938.7000122070312,
+    "gap_checked": "2026-11-04"
    }
   },
   {
    "symbol": "BLISSGVS",
    "mode": "momentum",
    "side": "LONG",
-   "qty": 7,
-   "entry_price": 670.2,
+   "qty": 22,
+   "entry_price": 647.8022727272728,
    "initial_stop": 0.0,
    "stop": 0.0,
    "entry_time": "2026-10-06 00:00:00",
@@ -95,24 +95,24 @@
    "best_price": 670.2,
    "meta": {
     "trade_id": "M20261006-BLISSGVS-4",
-    "margin": 4691.400000000001,
-    "entry_costs": 5.565060656400001,
+    "margin": 14251.650000000001,
+    "entry_costs": 16.905677772900003,
     "trigger": "momentum_12_1",
     "score": 3.2975,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-BLISSGVS-4",
-    "anchor_date": "2026-11-03",
-    "anchor_open": 618.0,
-    "anchor_close": 631.2999877929688,
-    "gap_checked": "2026-11-03"
+    "anchor_date": "2026-11-04",
+    "anchor_open": 637.0,
+    "anchor_close": 619.5499877929688,
+    "gap_checked": "2026-11-04"
    }
   },
   {
    "symbol": "INDSWFTLAB",
    "mode": "momentum",
    "side": "LONG",
-   "qty": 12,
-   "entry_price": 388.9,
+   "qty": 41,
+   "entry_price": 358.34390243902436,
    "initial_stop": 0.0,
    "stop": 0.0,
    "entry_time": "2026-10-06 00:00:00",
@@ -121,24 +121,24 @@
    "best_price": 388.9,
    "meta": {
     "trade_id": "M20261006-INDSWFTLAB-7",
-    "margin": 4666.799999999999,
-    "entry_costs": 5.5358794968,
+    "margin": 14692.099999999999,
+    "entry_costs": 17.428151014599997,
     "trigger": "momentum_12_1",
     "score": 2.5397,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-INDSWFTLAB-7",
-    "anchor_date": "2026-11-03",
-    "anchor_open": 357.75,
-    "anchor_close": 343.75,
-    "gap_checked": "2026-11-03"
+    "anchor_date": "2026-11-04",
+    "anchor_open": 345.5,
+    "anchor_close": 370.54998779296875,
+    "gap_checked": "2026-11-04"
    }
   },
   {
    "symbol": "HFCL",
    "mode": "momentum",
    "side": "LONG",
-   "qty": 19,
-   "entry_price": 262.95,
+   "qty": 65,
+   "entry_price": 225.98015384615383,
    "initial_stop": 0.0,
    "stop": 0.0,
    "entry_time": "2026-10-06 00:00:00",
@@ -147,24 +147,24 @@
    "best_price": 262.95,
    "meta": {
     "trade_id": "M20261006-HFCL-8",
-    "margin": 4996.05,
-    "entry_costs": 5.926444407300001,
+    "margin": 14688.71,
+    "entry_costs": 17.42412970846,
     "trigger": "momentum_12_1",
     "score": 1.9902,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-HFCL-8",
-    "anchor_date": "2026-11-03",
-    "anchor_open": 212.5500030517578,
-    "anchor_close": 217.3000030517578,
-    "gap_checked": "2026-11-03"
+    "anchor_date": "2026-11-04",
+    "anchor_open": 210.60000610351562,
+    "anchor_close": 228.16000366210938,
+    "gap_checked": "2026-11-04"
    }
   },
   {
    "symbol": "AEROFLEX",
    "mode": "momentum",
    "side": "LONG",
-   "qty": 9,
-   "entry_price": 550.0,
+   "qty": 27,
+   "entry_price": 527.3666666666667,
    "initial_stop": 0.0,
    "stop": 0.0,
    "entry_time": "2026-10-06 00:00:00",
@@ -173,24 +173,24 @@
    "best_price": 550.0,
    "meta": {
     "trade_id": "M20261006-AEROFLEX-9",
-    "margin": 4950.0,
-    "entry_costs": 5.8718186999999995,
+    "margin": 14238.9,
+    "entry_costs": 16.8905533914,
     "trigger": "momentum_12_1",
     "score": 1.913,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-AEROFLEX-9",
-    "anchor_date": "2026-11-03",
-    "anchor_open": 514.9500122070312,
-    "anchor_close": 512.5999755859375,
-    "gap_checked": "2026-11-03"
+    "anchor_date": "2026-11-04",
+    "anchor_open": 515.75,
+    "anchor_close": 567.2000122070312,
+    "gap_checked": "2026-11-04"
    }
   },
   {
    "symbol": "SAKAR",
    "mode": "momentum",
    "side": "LONG",
-   "qty": 4,
-   "entry_price": 971.6,
+   "qty": 15,
+   "entry_price": 948.7933333333333,
    "initial_stop": 0.0,
    "stop": 0.0,
    "entry_time": "2026-10-13 00:00:00",
@@ -199,24 +199,24 @@
    "best_price": 971.6,
    "meta": {
     "trade_id": "M20261013-SAKAR-11",
-    "margin": 3886.4,
-    "entry_costs": 4.6101487264,
+    "margin": 14231.9,
+    "entry_costs": 16.8822498094,
     "trigger": "momentum_12_1",
     "score": 2.1416,
     "last_bar": "2026-10-12 00:00:00",
     "order_id": "PAPER-SAKAR-1",
-    "anchor_date": "2026-11-03",
-    "anchor_open": 950.0,
-    "anchor_close": 944.5499877929688,
-    "gap_checked": "2026-11-03"
+    "anchor_date": "2026-11-04",
+    "anchor_open": 940.0,
+    "anchor_close": 979.5,
+    "gap_checked": "2026-11-04"
    }
   },
   {
    "symbol": "TBZ",
    "mode": "momentum",
    "side": "LONG",
-   "qty": 5,
-   "entry_price": 760.4,
+   "qty": 24,
+   "entry_price": 601.9875,
    "initial_stop": 0.0,
    "stop": 0.0,
    "entry_time": "2026-10-21 00:00:00",
@@ -225,16 +225,16 @@
    "best_price": 760.4,
    "meta": {
     "trade_id": "M20261021-TBZ-12",
-    "margin": 3802.0,
-    "entry_costs": 4.510031252,
+    "margin": 14447.699999999999,
+    "entry_costs": 17.1382373802,
     "trigger": "momentum_12_1",
     "score": 2.0933,
     "last_bar": "2026-10-19 00:00:00",
     "order_id": "PAPER-TBZ-1",
-    "anchor_date": "2026-11-03",
-    "anchor_open": 593.75,
-    "anchor_close": 577.7999877929688,
-    "gap_checked": "2026-11-03"
+    "anchor_date": "2026-11-04",
+    "anchor_open": 560.0,
+    "anchor_close": 606.6500244140625,
+    "gap_checked": "2026-11-04"
    }
   },
   {
@@ -263,207 +263,26 @@
    }
   }
  ],
- "pending": [
-  {
-   "action": "TOPUP",
-   "spec": {
-    "symbol": "STLTECH",
-    "side": "LONG",
-    "qty": 14,
-    "product": "CNC",
-    "ref_price": 759.6500244140625,
-    "stop": 0.0,
-    "signal_time": "2026-11-03 00:00:00",
-    "tag": "nbt1103STLTECH",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 6.9553,
-     "rank": 1
-    }
-   },
-   "order_id": "PAPER-STLTECH-1",
-   "placed": "2026-11-03 00:00:00"
-  },
-  {
-   "action": "TOPUP",
-   "spec": {
-    "symbol": "CUPID",
-    "side": "LONG",
-    "qty": 25,
-    "product": "CNC",
-    "ref_price": 338.5,
-    "stop": 0.0,
-    "signal_time": "2026-11-03 00:00:00",
-    "tag": "nbt1103CUPID",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 5.6518,
-     "rank": 2
-    }
-   },
-   "order_id": "PAPER-CUPID-2",
-   "placed": "2026-11-03 00:00:00"
-  },
-  {
-   "action": "TOPUP",
-   "spec": {
-    "symbol": "SIGMAADV",
-    "side": "LONG",
-    "qty": 11,
-    "product": "CNC",
-    "ref_price": 894.7999877929688,
-    "stop": 0.0,
-    "signal_time": "2026-11-03 00:00:00",
-    "tag": "nbt1103SIGMAADV",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 5.098,
-     "rank": 3
-    }
-   },
-   "order_id": "PAPER-SIGMAADV-3",
-   "placed": "2026-11-03 00:00:00"
-  },
-  {
-   "action": "TOPUP",
-   "spec": {
-    "symbol": "BLISSGVS",
-    "side": "LONG",
-    "qty": 15,
-    "product": "CNC",
-    "ref_price": 631.2999877929688,
-    "stop": 0.0,
-    "signal_time": "2026-11-03 00:00:00",
-    "tag": "nbt1103BLISSGVS",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 3.4861,
-     "rank": 4
-    }
-   },
-   "order_id": "PAPER-BLISSGVS-4",
-   "placed": "2026-11-03 00:00:00"
-  },
-  {
-   "action": "TOPUP",
-   "spec": {
-    "symbol": "INDSWFTLAB",
-    "side": "LONG",
-    "qty": 29,
-    "product": "CNC",
-    "ref_price": 343.75,
-    "stop": 0.0,
-    "signal_time": "2026-11-03 00:00:00",
-    "tag": "nbt1103INDSWFTLAB",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 2.8763,
-     "rank": 6
-    }
-   },
-   "order_id": "PAPER-INDSWFTLAB-5",
-   "placed": "2026-11-03 00:00:00"
-  },
-  {
-   "action": "TOPUP",
-   "spec": {
-    "symbol": "TBZ",
-    "side": "LONG",
-    "qty": 19,
-    "product": "CNC",
-    "ref_price": 577.7999877929688,
-    "stop": 0.0,
-    "signal_time": "2026-11-03 00:00:00",
-    "tag": "nbt1103TBZ",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 2.4343,
-     "rank": 8
-    }
-   },
-   "order_id": "PAPER-TBZ-6",
-   "placed": "2026-11-03 00:00:00"
-  },
-  {
-   "action": "TOPUP",
-   "spec": {
-    "symbol": "HFCL",
-    "side": "LONG",
-    "qty": 46,
-    "product": "CNC",
-    "ref_price": 217.3000030517578,
-    "stop": 0.0,
-    "signal_time": "2026-11-03 00:00:00",
-    "tag": "nbt1103HFCL",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 2.069,
-     "rank": 12
-    }
-   },
-   "order_id": "PAPER-HFCL-7",
-   "placed": "2026-11-03 00:00:00"
-  },
-  {
-   "action": "TOPUP",
-   "spec": {
-    "symbol": "AEROFLEX",
-    "side": "LONG",
-    "qty": 18,
-    "product": "CNC",
-    "ref_price": 512.5999755859375,
-    "stop": 0.0,
-    "signal_time": "2026-11-03 00:00:00",
-    "tag": "nbt1103AEROFLEX",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 2.0282,
-     "rank": 13
-    }
-   },
-   "order_id": "PAPER-AEROFLEX-8",
-   "placed": "2026-11-03 00:00:00"
-  },
-  {
-   "action": "TOPUP",
-   "spec": {
-    "symbol": "SAKAR",
-    "side": "LONG",
-    "qty": 11,
-    "product": "CNC",
-    "ref_price": 944.5499877929688,
-    "stop": 0.0,
-    "signal_time": "2026-11-03 00:00:00",
-    "tag": "nbt1103SAKAR",
-    "meta": {
-     "trigger": "momentum_12_1",
-     "score": 2.0167,
-     "rank": 14
-    }
-   },
-   "order_id": "PAPER-SAKAR-9",
-   "placed": "2026-11-03 00:00:00"
-  }
- ],
+ "pending": [],
  "breakers": {
   "consecutive_losses": 0,
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-11-03",
+  "session": "2026-11-04",
   "trades_today": 0,
   "realised_today": 0.0,
-  "peak_equity": 146778.58948813152,
+  "peak_equity": 148617.97831032114,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-11-03",
+ "last_processed": "2026-11-04",
  "traded_today": [],
  "trade_seq": 13,
  "low_eligible_runs": 0,
  "last_eligible": 858,
  "starved_rebalances": 0,
- "sessions_since_rebalance": 0,
+ "sessions_since_rebalance": 1,
  "flows": [
   {
    "session": "2026-11-03",
