@@ -23,10 +23,10 @@
     "score": 5.3241,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-CUPID-1",
-    "anchor_date": "2026-11-04",
-    "anchor_open": 339.6499938964844,
-    "anchor_close": 336.5,
-    "gap_checked": "2026-11-04"
+    "anchor_date": "2026-11-05",
+    "anchor_open": 341.0,
+    "anchor_close": 341.25,
+    "gap_checked": "2026-11-05"
    }
   },
   {
@@ -49,10 +49,10 @@
     "score": 4.795,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-STLTECH-2",
-    "anchor_date": "2026-11-04",
-    "anchor_open": 730.2999877929688,
-    "anchor_close": 797.5999755859375,
-    "gap_checked": "2026-11-04"
+    "anchor_date": "2026-11-05",
+    "anchor_open": 790.0,
+    "anchor_close": 757.75,
+    "gap_checked": "2026-11-05"
    }
   },
   {
@@ -75,10 +75,10 @@
     "score": 3.6712,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-SIGMAADV-3",
-    "anchor_date": "2026-11-04",
-    "anchor_open": 860.0999755859375,
-    "anchor_close": 938.7000122070312,
-    "gap_checked": "2026-11-04"
+    "anchor_date": "2026-11-05",
+    "anchor_open": 963.9500122070312,
+    "anchor_close": 930.1500244140625,
+    "gap_checked": "2026-11-05"
    }
   },
   {
@@ -101,10 +101,10 @@
     "score": 3.2975,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-BLISSGVS-4",
-    "anchor_date": "2026-11-04",
-    "anchor_open": 637.0,
-    "anchor_close": 619.5499877929688,
-    "gap_checked": "2026-11-04"
+    "anchor_date": "2026-11-05",
+    "anchor_open": 630.25,
+    "anchor_close": 632.4500122070312,
+    "gap_checked": "2026-11-05"
    }
   },
   {
@@ -127,10 +127,10 @@
     "score": 2.5397,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-INDSWFTLAB-7",
-    "anchor_date": "2026-11-04",
-    "anchor_open": 345.5,
-    "anchor_close": 370.54998779296875,
-    "gap_checked": "2026-11-04"
+    "anchor_date": "2026-11-05",
+    "anchor_open": 381.0,
+    "anchor_close": 356.75,
+    "gap_checked": "2026-11-05"
    }
   },
   {
@@ -153,10 +153,10 @@
     "score": 1.9902,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-HFCL-8",
-    "anchor_date": "2026-11-04",
-    "anchor_open": 210.60000610351562,
-    "anchor_close": 228.16000366210938,
-    "gap_checked": "2026-11-04"
+    "anchor_date": "2026-11-05",
+    "anchor_open": 225.60000610351562,
+    "anchor_close": 221.74000549316406,
+    "gap_checked": "2026-11-05"
    }
   },
   {
@@ -179,10 +179,10 @@
     "score": 1.913,
     "last_bar": "2026-10-05 00:00:00",
     "order_id": "PAPER-AEROFLEX-9",
-    "anchor_date": "2026-11-04",
-    "anchor_open": 515.75,
-    "anchor_close": 567.2000122070312,
-    "gap_checked": "2026-11-04"
+    "anchor_date": "2026-11-05",
+    "anchor_open": 584.5499877929688,
+    "anchor_close": 540.2999877929688,
+    "gap_checked": "2026-11-05"
    }
   },
   {
@@ -205,10 +205,10 @@
     "score": 2.1416,
     "last_bar": "2026-10-12 00:00:00",
     "order_id": "PAPER-SAKAR-1",
-    "anchor_date": "2026-11-04",
-    "anchor_open": 940.0,
-    "anchor_close": 979.5,
-    "gap_checked": "2026-11-04"
+    "anchor_date": "2026-11-05",
+    "anchor_open": 988.0,
+    "anchor_close": 1015.9000244140625,
+    "gap_checked": "2026-11-05"
    }
   },
   {
@@ -231,10 +231,10 @@
     "score": 2.0933,
     "last_bar": "2026-10-19 00:00:00",
     "order_id": "PAPER-TBZ-1",
-    "anchor_date": "2026-11-04",
-    "anchor_open": 560.0,
-    "anchor_close": 606.6500244140625,
-    "gap_checked": "2026-11-04"
+    "anchor_date": "2026-11-05",
+    "anchor_open": 617.0,
+    "anchor_close": 607.1500244140625,
+    "gap_checked": "2026-11-05"
    }
   },
   {
@@ -269,20 +269,20 @@
   "cooldown_left": 0,
   "reduced": false,
   "reduced_left": 0,
-  "session": "2026-11-04",
+  "session": "2026-11-05",
   "trades_today": 0,
   "realised_today": 0.0,
   "peak_equity": 148617.97831032114,
   "halted_for_session": false,
   "latched": false
  },
- "last_processed": "2026-11-04",
+ "last_processed": "2026-11-05",
  "traded_today": [],
  "trade_seq": 13,
  "low_eligible_runs": 0,
  "last_eligible": 858,
  "starved_rebalances": 0,
- "sessions_since_rebalance": 1,
+ "sessions_since_rebalance": 2,
  "flows": [
   {
    "session": "2026-11-03",
