@@ -376,6 +376,80 @@ Findings:
    - **5 years:** worst ₹3.07L, median ₹7.88L, 90th percentile ₹13.0L.
    - These are upper bounds: delisted stocks are missing, 2018–26 held an exceptional smallcap boom, the windows overlap heavily, and tax isn't charged.
 
+## Round 11: building the book to show results inside 2–3 years (run 45157238499)
+
+Pre-registered in commit 999dc96 (`nsebot/research/fast.py`) before any result was seen.
+
+**Why.** The owner (Nov 2026) wants to study the paper book for at most 6 months, then trade it with real money for growth that is plainly visible within 2–3 years. Rounds 9–10 had already tested the score, buy filters, monthly rebalancing and book size. This round tests the levers that were left, one change at a time from B4 top 10, judged on **rolling 2-year CAGR**.
+
+**Rule.**
+1. Drop any design deeper than the 55% latch.
+2. The highest median 2-year CAGR wins.
+3. It replaces B4 top 10 only if it is 3+ points better, its 10th-percentile 2-year CAGR is no worse, *and* it beats B4 at 3+ of 5 phases on the untouched window.
+4. A margin winner stays off the paper book until MTF eligibility is modelled.
+
+| Design | Median 2-yr CAGR | 10th pct 2-yr | Worst 2-yr | 2-yr windows losing | Median 3-yr | Worst max DD | Untouched phases beating B4 | 6-month windows ahead of market |
+|---|---|---|---|---|---|---|---|---|
+| **B4 top 10 (deployed)** | **+37.0%** | **+6.5%** | −4.7% | 2% | +40.2% | −53.2% | — | 55% |
+| F1 6-1 momentum | +43.0% | −1.1% | −19.1% | 11% | +39.9% | −49.5% | 5/5 | 58% |
+| F2 rebalance every 2 sessions | +35.3% | +6.3% | −6.8% | 3% | +37.7% | −51.4% | 2/5 | 57% |
+| F3 hold band 2N ⛔ | +38.4% | +6.5% | −6.1% | 4% | +40.4% | −56.3% | 4/5 | 56% |
+| F4 volatility-targeted | +30.9% | +2.2% | −9.1% | 7% | +33.6% | −53.7% | 0/5 | 49% |
+| F5 volatility-targeted, up to 1.5x margin ⛔ | +35.0% | −0.6% | −16.4% | 11% | +35.8% | −59.3% | 0/5 | 44% |
+| F6 constant 1.3x margin ⛔ | +41.6% | +1.9% | −11.5% | 8% | +45.8% | −65.5% | 5/5 | 54% |
+
+_⛔ deeper than the 55% latch: out under rule 1. Volatility target 26.6% a year. "Market" is an equal-weight hold of every eligible NSE stock._
+
+**Verdict (pre-registered): B4 top 10 stays.**
+- F1 (6-1 momentum) had the highest median, +6.0 points, and beat B4 at all 5 untouched phases. But its 10th-percentile 2-year CAGR was 7.6 points worse and 11% of its 2-year windows lost money against 2% for B4, so rule 3 fails.
+
+Findings:
+1. **Faster signals buy a higher median with a fatter left tail.** For an owner who wants results that are *clearly* visible in 2–3 years, that is the wrong trade: B4's worst 2-year window lost 4.7%, F1's lost 19.1%.
+2. **Volatility targeting cuts returns here**, as the 200-day market filter did in round 5. It de-risks after the crashes momentum then recovers from.
+3. **Margin breaches the latch.** 1.3x on margin fell 65.5% at worst. It also could not be done: MTF covers broker-approved stocks only, never series BE or BZ, which hold half of B4's names.
+4. **Trading faster or holding tighter adds nothing.** Rebalancing every 2 sessions made less; selling below rank 20 made 1 point more and fell 56%.
+5. **What ₹1,50,000 became in B4 top 10:**
+   - **2 years:** worst ₹1.36L, 10th percentile ₹1.70L, median ₹2.82L, 90th percentile ₹4.81L.
+   - **3 years:** worst ₹2.24L, 10th percentile ₹3.09L, median ₹4.13L, 90th percentile ₹5.13L.
+   - The same upper-bound caveats as round 10 apply.
+6. **A live record can't prove the edge in a useful time.** The book's monthly excess over the market has an information ratio of 0.54, so a live record needs about 14 years to show it at t = 2. The decision to trade real money has to rest on the backtest, the engine's fidelity to it, and the owner's tolerance for the drawdowns.
+
+## The 6-month checkpoint (run 45157243085)
+
+Pre-registered in the same commit (`nsebot/research/checkpoint.py`), before the data it judges exists. It runs on the 1st of every month and gives its verdict on or after **31 May 2027**.
+
+**Rule.** Real money goes on the deployed design when all of these hold:
+- the live time-weighted return since 5 Oct 2026 is within 5 points of the research replay from the same first decision;
+- the 55% latch has not tripped;
+- no holding has sat flagged as a suspected corporate action for more than 10 sessions.
+
+The live return against the market is reported but is **not** a condition. V4 switches on at the checkpoint only if it leads B4 at 4+ of 5 phases from 3 Nov 2026 by a median of 3+ points.
+
+**Today (data to 20–23 Nov 2026):**
+
+| | |
+|---|---|
+| Live sleeve, time-weighted | −9.6% |
+| Research replay of B4 from 5 Oct | −8.2% |
+| **Gap** | **−1.4 points: the bot does what the research says** |
+| Equal-weight hold of every eligible stock | −1.1% |
+| V4 against B4 from 3 Nov | ahead at 5 of 5 phases, median +1.7 points (bar: 4 of 5 and +3) |
+
+**What a stretch of results says about B4** (every start since Jul 2018, all 5 phases):
+
+| Stretch | Ahead of the market | Lost money | Median lead |
+|---|---|---|---|
+| 6 months | 55% | 34% | +2.6% |
+| 12 months | 63% | 27% | +8.9% |
+| 24 months | 74% | 3% | +31.2% |
+
+A working B4 is behind the market after 6 months almost half the time, so 6 months of returns cannot say whether it works. The checkpoint tests what 6 months *can* show: that the live bot trades the research design faithfully.
+
+**Round 10 re-run (run 45157247577).** On data to 23 Nov, V4 top 15 now beats B4 top 10 at 3 of 5 untouched phases (2 of 5 on 3 Nov) with +5.8 points of median 3-year CAGR, so round 10's rule would now pass. Nothing was switched:
+- The untouched window is 2018–23 and gained no data; the flip comes from small revisions to the universe and to Yahoo's history. A verdict that moves on revisions is on a knife-edge.
+- Re-applying a rule until it passes is optional stopping. Round 10 said V4 would be decided by a forward test on data from Nov 2026 on, and the checkpoint now sets that bar.
+- Waiting costs little: if V4's lead is real, 6 months of it is worth about 2% of the book.
+
 ## What the evidence supports
 
 1. **Swing: S4b dip reversion is not proven, and round 5 points negative.**
@@ -402,3 +476,7 @@ Findings:
 8. **From 3 Nov 2026 momentum is the whole book.**
    - Intraday and swing are retired (round 9 and docs/DIAGNOSIS.md).
    - Round 10 re-tested the book's size and the V4 filter for a 3–5 year horizon and kept B4 top 10 unchanged.
+9. **Nothing tested since makes it faster or more aggressive without a worse left tail.**
+   - Round 11 tried 6-1 momentum, faster rebalancing, a tighter hold band, volatility targeting and margin; B4 top 10 stays.
+   - Six months of live returns can't settle whether it works: a working B4 trails the market over 6 months 45% of the time.
+   - The 6-month checkpoint (31 May 2027) tests whether the live bot trades the research design faithfully, and decides V4 on forward data. On 20 Nov the live book was within 1.4 points of the research replay.

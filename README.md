@@ -76,7 +76,26 @@ All numbers below come from the bot's own code run on real NSE data, net of Zero
   - 53% of trades made money; the best tenth of trades made all of the profit.
 - **Against funds.** Untouched Jul 2018 – Jul 2023: +22.6% to +32.6% CAGR across rebalance timings, against +21.7% for the median active smallcap fund and +28.7% for the best. Jul 2018 – Oct 2026: +30.2% to +37.7%, against +18.5% and +24.5% (rounds 5–8).
 - **Engine fidelity.** The live engine, replayed on real data, matches the research within a few tenths of a point on the same rebalance days.
-- **Live so far.** From 5 Oct to 28 Oct 2026 it made −4.6% once the BHAGYANGR demerger is counted properly, against −5.1% for an equal-weight hold of every eligible NSE stock. The ledger had booked that demerger as an 89% loss; it is now credited (see [corporate actions](#sleeves-and-corporate-actions)).
+- **Live so far.** From 5 Oct to 20 Nov 2026 it made **−9.6%** (time-weighted, so the money moved in on 3 Nov counts as neither gain nor loss).
+  - Over the same sessions, an equal-weight hold of every eligible NSE stock made −1.1%, the Nifty 500 +8.1% and the Nifty 50 +12.4%.
+  - 15% of B4's 32-session stretches since 2018 were as bad or worse.
+  - The research simulator, replaying B4 from the same first decision, made −8.2%, so the live bot is within 1.4 points of the research (the checkpoint's test below).
+  - The BHAGYANGR demerger, first booked as an 89% loss, is credited (see [corporate actions](#sleeves-and-corporate-actions)).
+- **Faster or more aggressive? Not without a worse left tail.** Round 11 ([`docs/RESEARCH.md`](docs/RESEARCH.md)) judged six changes on rolling 2-year results: 6-1 momentum, rebalancing every 2 sessions, a tighter hold band, volatility targeting, and two margin designs.
+  - 6-1 momentum had a higher median, but 11% of its 2-year windows lost money, against 2% for the deployed design.
+  - Volatility targeting cut returns.
+  - Margin fell 59–66% at worst, and margin (MTF) doesn't cover the BE-series names the book often holds.
+- **What ₹1,50,000 became after 2 years** in the backtest: worst ₹1.36 L, 10th percentile ₹1.70 L, median ₹2.82 L, 90th percentile ₹4.81 L. Same upper-bound caveats as above.
+
+**The 6-month plan.**
+- **Six months of returns can't prove it works.** Since 2018, B4 was ahead of the market after 6 months only 55% of the time, and lost money in 34% of 6-month stretches. After 2 years: 74% ahead, 3% losing.
+- **So the checkpoint tests what 6 months can show** (`study=checkpoint`, pre-registered; runs on the 1st of every month). On or after **31 May 2027**, real money goes on when:
+  - the live return is within 5 points of the research replay;
+  - the 55% latch has not tripped;
+  - no corporate-action flag is older than 10 sessions.
+- **Beating the market by then is not a condition.** Making it one would mean buying after luck and quitting after bad luck.
+- **The V4 filter is decided there too, on data it has never seen.** It switches on if it leads at 4 of 5 rebalance timings from 3 Nov 2026 by 3+ points. On 20 Nov: 5 of 5, +1.7 points.
+- **Real money, in practice.** The momentum book trades 0–3 orders a week, at the open after a rebalance. Placing them by hand from the emailed report needs no Kite Connect subscription or static IP; set up email ([`docs/SCHEDULING.md`](docs/SCHEDULING.md)) first.
 
 **Retired.**
 - **Swing.** S4b dip reversion passed out-of-sample on 2023–26 (+0.69% a trade), then failed on untouched 2018–20 data and froze in the COVID crash.
