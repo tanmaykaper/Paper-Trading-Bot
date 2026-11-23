@@ -153,3 +153,17 @@ def test_round_trips_read_entries_and_exits_off_the_holdings_log():
     assert len(rt) == 1 and rt['symbol'].iloc[0] == P.symbols[0] and rt['sessions'].iloc[0] == 5
     o = P.a['open'][:, 0]
     assert rt['net'].iloc[0] < o[10] / o[5] - 1 < rt['net'].iloc[0] + 0.007       # gross less CNC costs (~0.5% on ₹5k)
+
+
+def test_live_return_is_time_weighted_and_counts_a_credited_gap_once():
+    d = pd.to_datetime(['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08'])
+    e = pd.Series([50_000.0, 45_000.0, 145_000.0, 150_000.0], index=d)
+    flows = {d[2]: 100_000.0}                       # money moved in on the 7th is not a gain
+    assert np.isclose(diagnosis.live_twr(e, flows, 50_000.0), 0.9 * 1.0 * (150 / 145) - 1)
+    # a 5k corporate-action gap on the 6th, credited back on the 8th: the
+    # value-kept curve has no loss on the 6th and no gain on the 8th
+    kept = {d[1]: 5_000.0, d[3]: -5_000.0}
+    assert np.isclose(diagnosis.live_twr(e, flows, 50_000.0, extra=kept), 0.0)
+    trades = pd.DataFrame({'trigger': ['momentum_12_1', 'corporate_action'], 'net_pnl': [10.0, 5_000.0],
+                           'exit_time': ['2026-10-07 00:00:00', '2026-10-08 00:00:00']})
+    assert diagnosis.credits_booked(trades) == {d[3]: 5_000.0}
