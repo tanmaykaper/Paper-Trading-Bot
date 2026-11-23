@@ -1,8 +1,9 @@
 # .github/workflows/research.yml
 #
 # Tests + real-data signal research for the nsebot rebuild. Runs on every push
-# to a claude/** branch that touches the engine, and on demand. Read-only: it
-# never commits, never touches paper_trades.csv, never places an order.
+# to a working branch (anything but main) that touches the engine, on demand,
+# and on the 1st of every month as the 6-month checkpoint study. Read-only:
+# it never commits, never touches paper_trades.csv, never places an order.
 #
 # The research job downloads ~2 years of daily bars and ~59 days of 5-minute
 # bars from Yahoo (free) and measures every historical trigger from the exact
@@ -13,16 +14,18 @@ name: nsebot research
 
 on:
   push:
-    branches: ['claude/**']
+    branches-ignore: [main]
     paths:
       - 'nsebot/**'
       - 'tests/**'
       - 'diagnostics/**'
       - '.github/workflows/research.yml'
+  schedule:
+    - cron: '23 4 1 * *'         # 09:53 IST on the 1st: the checkpoint study (nsebot/research/checkpoint.py)
   workflow_dispatch:
     inputs:
       study:
-        description: 'backtest | diagnosis | growth | phase5 | phase5_diag | phase5b | symbol_check | momentum_replay | momentum_phase | hurdle | attribution | experiments | event_study'
+        description: 'backtest | checkpoint | fast | diagnosis | growth | phase5 | phase5_diag | phase5b | symbol_check | momentum_replay | momentum_phase | hurdle | attribution | experiments | event_study'
         default: 'backtest'
 
 permissions:
@@ -61,11 +64,11 @@ jobs:
           pip install -r requirements.txt
       - name: Signal research on real NSE data
         env:
-          STUDY: ${{ github.event.inputs.study || 'backtest' }}
+          STUDY: ${{ github.event.inputs.study || (github.event_name == 'schedule' && 'checkpoint') || 'backtest' }}
         run: |
           case "$STUDY" in
             backtest) python -m nsebot backtest --out research_results ;;
-            diagnosis|growth|phase5|phase5_diag|phase5b|symbol_check|momentum_replay|momentum_phase|hurdle|attribution|experiments|event_study) python -m "nsebot.research.$STUDY" --out research_results ;;
+            checkpoint|fast|diagnosis|growth|phase5|phase5_diag|phase5b|symbol_check|momentum_replay|momentum_phase|hurdle|attribution|experiments|event_study) python -m "nsebot.research.$STUDY" --out research_results ;;
             *) echo "unknown study: $STUDY" && exit 1 ;;
           esac
       - uses: actions/upload-artifact@v4

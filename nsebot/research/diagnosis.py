@@ -362,18 +362,54 @@ def equity_series_map(get=_get_text):
 
 
 def live_ledger(state_dir):
-    """(equity curve, positions, closed trades) of the live momentum sleeve, or Nones."""
+    """(equity curve, positions, closed trades, money moved in, starting cash) of
+    the live momentum sleeve; Nones and empties when the state is missing."""
     def read(name):
         p = os.path.join(state_dir, name)
         return pd.read_csv(p) if os.path.exists(p) else None
     eq = read('equity.csv')
     trades = read('trades.csv')
-    positions = []
+    positions, flows, initial = [], {}, None
     p = os.path.join(state_dir, 'state.json')
     if os.path.exists(p):
         with open(p) as fh:
-            positions = json.load(fh).get('positions', [])
-    return eq, positions, trades
+            st = json.load(fh)
+        positions = st.get('positions', [])
+        initial = st.get('initial_cash')
+        for f in st.get('flows') or []:
+            try:
+                d = pd.Timestamp(str(f['session'])[:10])
+                flows[d] = flows.get(d, 0.0) + float(f.get('amount') or 0.0)
+            except (KeyError, TypeError, ValueError):
+                continue
+    return eq, positions, trades, flows, initial
+
+
+def live_twr(e, flows=None, initial=None, extra=None):
+    """Time-weighted return of an equity curve (scripts/progress.py's twr): each
+    session's change net of the money moved in (+) or out (-) that session,
+    chained, from `initial` (or the first row) before the first session.
+    `extra` {date: rupees} adds rupees to the equity from that date on."""
+    flows, extra = flows or {}, extra or {}
+    e = e.astype(float).copy()
+    for d, v in extra.items():
+        e[e.index >= d] += v
+    growth, prev = 1.0, float(initial) if initial else float(e.iloc[0])
+    for d, v in e.items():
+        if prev > 0:
+            growth *= (v - flows.get(d, 0.0)) / prev
+        prev = v
+    return growth - 1
+
+
+def credits_booked(trades):
+    """{date: rupees} the ledger already credited for corporate actions."""
+    out = {}
+    if trades is not None and 'trigger' in trades.columns:
+        for r in trades[trades['trigger'] == 'corporate_action'].itertuples():
+            d = pd.Timestamp(r.exit_time).normalize()
+            out[d] = out.get(d, 0.0) + float(r.net_pnl)
+    return out
 
 
 def live_ca(P, events, positions, trades):
@@ -457,7 +493,7 @@ def run(out_dir, fetch=None, get_list=None, get_series=None, state_dir=os.path.j
 
     # ── 1 live window ────────────────────────────────────────────────────────
     md += ['## 1. The live window', '']
-    eq, positions, trades = live_ledger(state_dir)
+    eq, positions, trades, flows, initial = live_ledger(state_dir)
     t0 = int(np.searchsorted(P.dates, LIVE_START))
     live = {}                                       # live window returns, for section 5
     if t0 < len(P.dates) and P.dates[t0] == LIVE_START and t0 + 1 < len(P.dates):
@@ -465,15 +501,23 @@ def run(out_dir, fetch=None, get_list=None, get_series=None, state_dir=os.path.j
                '| | return |', '|---|---|']
         if eq is not None and len(eq):
             e = eq.set_index(pd.to_datetime(eq['session']))['equity'].astype(float)
-            live['as booked'] = e.iloc[-1] / e.iloc[0] - 1
+            live['as booked'] = live_twr(e, flows, initial)
             live['sessions'] = len(e) - 1
-            md.append(f'| Momentum sleeve, as booked | {_p(live["as booked"])} |')
+            moved = sum(flows.values())
+            md.append(f'| Momentum sleeve, as booked (time-weighted'
+                      f'{f", net of ₹{moved:,.0f} moved in" if moved else ""}) | {_p(live["as booked"])} |')
             hits = live_ca(P, events, positions, trades)
-            if hits:
-                booked = sum(h[3] for h in hits)
-                live['value kept'] = (e.iloc[-1] + booked) / e.iloc[0] - 1
-                md.append(f'| Momentum sleeve, value kept across corporate-action gaps (est.) | '
-                          f'{_p(live["value kept"])} |')
+            if hits:                                # the gap's loss put back on its day, credits taken out on theirs
+                kept = {}
+                for _, d, _, v in hits:
+                    kept[pd.Timestamp(d)] = kept.get(pd.Timestamp(d), 0.0) + v
+                for d, v in credits_booked(trades).items():
+                    kept[d] = kept.get(d, 0.0) - v
+                v_kept = live_twr(e, flows, initial, extra=kept)
+                if abs(v_kept - live['as booked']) > 5e-4:  # equal once every gap is credited back
+                    live['value kept'] = v_kept
+                    md.append(f'| Momentum sleeve, value kept across corporate-action gaps (est.) | '
+                              f'{_p(live["value kept"])} |')
         for sym, label in BENCHMARKS.items():
             d = bench.get(sym)
             if d is not None and len(d):
