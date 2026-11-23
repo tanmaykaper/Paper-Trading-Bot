@@ -216,7 +216,7 @@ Environment variables (all optional):
 - For on-time runs (needed for intraday) and email reports, see [`docs/SCHEDULING.md`](docs/SCHEDULING.md). Both are one-time, free setups.
 - On rebalance days `momentum.yml` downloads NSE's equity list (saved to `state/momentum/` as a fallback for up to 30 days) and about 2,600 symbols from Yahoo, which takes a few minutes. Other days it fetches only the holdings.
 - Scheduled workflows only run from the **default branch**, so this code must be merged into `main` to go live.
-- `research.yml` runs the tests and the backtest or experiments on `claude/**` branches.
+- `research.yml` runs the tests and the backtest on every push to a branch other than `main`, any study on demand (`study=`), and the 6-month checkpoint study on the 1st of every month.
 
 ---
 

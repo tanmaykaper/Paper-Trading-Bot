@@ -15,7 +15,7 @@ For this repo that means:
 
 Nothing inside the repo can make GitHub's scheduler punctual. What the repo can do is make sure a late or dropped run never costs a session, without anyone looking after it.
 
-## What the repo does on its own (no setup, no Claude)
+## What the repo does on its own (no setup, nobody watching)
 
 1. **Many schedule slots.** Each slot lands off the round minutes (:13, :37, :22), away from the busy start of the hour.
 
