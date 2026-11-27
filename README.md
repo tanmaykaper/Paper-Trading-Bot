@@ -3,24 +3,24 @@
 <!-- progress:start — drawn by scripts/progress.py after every bot run; edits here are overwritten -->
 ## How the money is doing
 
-**₹1,35,680 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−9.55%), at the close on 26 Nov 2026.
+**₹1,38,291 in your pocket**, from ₹1,50,000 put in on 5 Oct 2026 (−7.81%), at the close on 27 Nov 2026.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/progress/chart-dark.svg">
-  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,35,680 on 26 Nov 2026." src="docs/progress/chart-light.svg">
+  <img alt="Line chart of the money in your pocket after charges and tax, from ₹1,50,000 on 5 Oct 2026 to ₹1,38,291 on 27 Nov 2026." src="docs/progress/chart-light.svg">
 </picture>
 
 That is what the three bots' paper trades would have left you with as real trades, had you sold everything at that close: after Zerodha's charges and slippage on every trade, the cost of selling the open positions, and income tax on the profit.
 
-| Bot | Since | Value | Return | Change on 26 Nov | Closed trades | Open now |
+| Bot | Since | Value | Return | Change on 27 Nov | Closed trades | Open now |
 |---|---|---|---|---|---|---|
-| Momentum | 5 Oct 2026 | ₹1,36,022 | −11.41% | +₹1,083 | 3 | 10 |
+| Momentum | 5 Oct 2026 | ₹1,38,638 | −9.70% | +₹2,615 | 3 | 10 |
 | Swing (retired) | 5 Oct 2026 | ₹0 | +3.36% | ₹0 | 4 | 0 |
 | Intraday (retired) | 9 Oct 2026 | ₹0 | −11.84% | ₹0 | 75 | 0 |
-| **All three** | | **₹1,36,022** | **−9.32%** | +₹1,083 | 82 | 10 |
-| Selling the open positions | | −₹342 | | | | |
+| **All three** | | **₹1,38,638** | **−7.57%** | +₹2,615 | 82 | 10 |
+| Selling the open positions | | −₹346 | | | | |
 | Tax on the profit | | ₹0 | | | | |
-| **In your pocket** | | **₹1,35,680** | **−9.55%** | | | |
+| **In your pocket** | | **₹1,38,291** | **−7.81%** | | | |
 
 <sub>Value is cash plus open positions at the close, after the charges already paid. A bot's return is time-weighted, so money moved between bots counts as neither profit nor loss; a retired bot's cash moves to momentum once it is flat (state/sleeves.json). Tax is 20.8% on delivery profits (short-term capital gains) and 31.2% on intraday profits (speculative income at the top slab); a loss pays none. Dividends and tax-year boundaries are not modelled. Updated by each bot after its run.</sub>
 <!-- progress:end -->
